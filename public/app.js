@@ -16,9 +16,22 @@ const STORAGE_KEYS = {
 
 const STALE_MS = 60 * 60 * 1000;
 
+const CATEGORY_COLORS = [
+  'cat-color-1',
+  'cat-color-2',
+  'cat-color-3',
+  'cat-color-4',
+  'cat-color-5',
+  'cat-color-6',
+  'cat-color-7',
+  'cat-color-8',
+  'cat-color-9'
+];
+
 const els = {
   status: document.getElementById('status'),
   catalogRoot: document.getElementById('catalog-root'),
+  categoryTabs: document.getElementById('category-tabs'),
   basketSum: document.getElementById('basket-sum'),
   refreshBtn: document.getElementById('refresh-btn'),
 
@@ -84,7 +97,11 @@ function setStatus(text, isError = false) {
 }
 
 function refreshStatusFromLoadedAt() {
-  setStatus(formatLoadedAt(state.loadedAt), Date.now() - new Date(state.loadedAt || 0).getTime() > STALE_MS);
+  const isStale = state.loadedAt
+    ? (Date.now() - new Date(state.loadedAt).getTime() > STALE_MS)
+    : false;
+
+  setStatus(formatLoadedAt(state.loadedAt), isStale);
 }
 
 function buildImageUrl(url) {
@@ -105,6 +122,14 @@ function getTotalSum() {
     const product = getProductById(id);
     if (!product) return sum;
     return sum + (Number(product.cartPrice) || 0) * qty;
+  }, 0);
+}
+
+function getCategoryOrderCount(categoryId) {
+  return Object.entries(state.cart).reduce((sum, [id, qty]) => {
+    const product = getProductById(id);
+    if (!product) return sum;
+    return product.categoryId === categoryId ? sum + qty : sum;
   }, 0);
 }
 
@@ -193,66 +218,68 @@ function sortRuByName(items) {
   );
 }
 
+function getCategoryColorClass(categoryId) {
+  const index = state.categories.findIndex((c) => c.id === categoryId);
+  return CATEGORY_COLORS[index % CATEGORY_COLORS.length] || CATEGORY_COLORS[0];
+}
+
+function ensureSelectedCategory() {
+  if (state.categories.length && state.selectedCategory === 'all') {
+    state.selectedCategory = state.categories[0].id;
+  }
+
+  if (state.selectedCategory !== 'all') {
+    const exists = state.categories.some((c) => c.id === state.selectedCategory);
+    if (!exists && state.categories.length) {
+      state.selectedCategory = state.categories[0].id;
+    }
+  }
+}
+
 function renderCategoryMenu() {
-  const items = [
-    `<button class="menu-item ${state.selectedCategory === 'all' ? 'is-active' : ''}" data-category="all" type="button">Все товары</button>`,
-    ...state.categories.map((category) => `
+  const items = state.categories.map((category) => {
+    const count = getCategoryOrderCount(category.id);
+    return `
       <button
         class="menu-item ${state.selectedCategory === category.id ? 'is-active' : ''}"
         data-category="${escapeHtml(category.id)}"
         type="button"
       >
-        ${escapeHtml(category.name)}
+        <span>${escapeHtml(category.name)}</span>
+        <span class="menu-item__count">${count}</span>
       </button>
-    `)
-  ];
+    `;
+  });
 
   els.categoryMenuList.innerHTML = items.join('');
 }
 
-function getGroupedProducts() {
-  const byCategory = new Map();
+function getVisibleCategoryGroup() {
+  ensureSelectedCategory();
 
-  for (const category of state.categories) {
-    byCategory.set(category.id, []);
-  }
+  const category = state.categories.find((c) => c.id === state.selectedCategory);
+  if (!category) return null;
 
-  for (const product of state.products) {
-    if (!byCategory.has(product.categoryId)) {
-      byCategory.set(product.categoryId, []);
-    }
-    byCategory.get(product.categoryId).push(product);
-  }
+  const products = sortRuByName(
+    state.products.filter((product) => product.categoryId === category.id)
+  );
 
-  if (state.selectedCategory !== 'all') {
-    const category = state.categories.find((c) => c.id === state.selectedCategory);
-    return category
-      ? [{
-          id: category.id,
-          name: category.name,
-          products: sortRuByName(byCategory.get(category.id) || [])
-        }]
-      : [];
-  }
-
-  return state.categories
-    .map((category) => ({
-      id: category.id,
-      name: category.name,
-      products: sortRuByName(byCategory.get(category.id) || [])
-    }))
-    .filter((group) => group.products.length > 0);
+  return {
+    id: category.id,
+    name: category.name,
+    products
+  };
 }
 
 function renderCatalog() {
-  const groups = getGroupedProducts();
+  const group = getVisibleCategoryGroup();
 
-  if (!groups.length) {
+  if (!group || !group.products.length) {
     els.catalogRoot.innerHTML = '<div class="empty-state">Нет товаров</div>';
     return;
   }
 
-  els.catalogRoot.innerHTML = groups.map((group) => `
+  els.catalogRoot.innerHTML = `
     <section class="category-block" id="category-${escapeHtml(group.id)}">
       <h2 class="category-title">${escapeHtml(group.name)}</h2>
       <div class="grid">
@@ -279,7 +306,28 @@ function renderCatalog() {
         }).join('')}
       </div>
     </section>
-  `).join('');
+  `;
+}
+
+function renderCategoryTabs() {
+  const tabs = state.categories.map((category) => {
+    const count = getCategoryOrderCount(category.id);
+    const active = state.selectedCategory === category.id;
+    const colorClass = getCategoryColorClass(category.id);
+
+    return `
+      <button
+        class="category-tab ${colorClass} ${active ? 'is-active' : ''}"
+        type="button"
+        data-category="${escapeHtml(category.id)}"
+      >
+        <span class="category-tab__name">${escapeHtml(category.name)}</span>
+        <span class="category-tab__count">${count}</span>
+      </button>
+    `;
+  });
+
+  els.categoryTabs.innerHTML = tabs.join('');
 }
 
 function updateAllBadges() {
@@ -295,6 +343,13 @@ function updateAllBadges() {
 
 function updateTopbar() {
   els.basketSum.textContent = formatPrice(getTotalSum());
+}
+
+function rerenderVisibleParts() {
+  renderCatalog();
+  renderCategoryTabs();
+  renderCategoryMenu();
+  updateTopbar();
 }
 
 function renderBasket() {
@@ -380,6 +435,8 @@ function addToCart(productId) {
   state.cart[productId] = (state.cart[productId] || 0) + 1;
   saveCart();
   updateAllBadges();
+  renderCategoryTabs();
+  renderCategoryMenu();
   updateTopbar();
 }
 
@@ -395,6 +452,8 @@ function changeCartQty(productId, delta) {
 
   saveCart();
   updateAllBadges();
+  renderCategoryTabs();
+  renderCategoryMenu();
   updateTopbar();
   renderBasket();
 }
@@ -403,6 +462,8 @@ function clearCart() {
   state.cart = {};
   saveCart();
   updateAllBadges();
+  renderCategoryTabs();
+  renderCategoryMenu();
   updateTopbar();
   renderBasket();
 }
@@ -424,15 +485,15 @@ async function loadProducts() {
     state.categories = Array.isArray(data.categories) ? data.categories : [];
     state.loadedAt = data.loadedAt || null;
 
+    ensureSelectedCategory();
+
     saveCatalog({
       products: state.products,
       categories: state.categories,
       loadedAt: state.loadedAt
     });
 
-    renderCatalog();
-    renderCategoryMenu();
-    updateTopbar();
+    rerenderVisibleParts();
     refreshStatusFromLoadedAt();
   } catch (error) {
     const cached = loadCatalogFromStorage();
@@ -441,9 +502,9 @@ async function loadProducts() {
       state.products = cached.products;
       state.categories = cached.categories || [];
       state.loadedAt = cached.loadedAt || null;
-      renderCatalog();
-      renderCategoryMenu();
-      updateTopbar();
+
+      ensureSelectedCategory();
+      rerenderVisibleParts();
       refreshStatusFromLoadedAt();
     } else {
       setStatus(error.message || 'Ошибка загрузки каталога', true);
@@ -474,15 +535,15 @@ async function refreshProducts() {
     state.categories = Array.isArray(data.categories) ? data.categories : [];
     state.loadedAt = data.loadedAt || new Date().toISOString();
 
+    ensureSelectedCategory();
+
     saveCatalog({
       products: state.products,
       categories: state.categories,
       loadedAt: state.loadedAt
     });
 
-    renderCatalog();
-    renderCategoryMenu();
-    updateTopbar();
+    rerenderVisibleParts();
     refreshStatusFromLoadedAt();
   } catch (error) {
     setStatus(error.message || 'Ошибка обновления каталога', true);
@@ -569,6 +630,17 @@ els.catalogRoot.addEventListener('click', (event) => {
   addToCart(id);
 });
 
+els.categoryTabs.addEventListener('click', (event) => {
+  const tab = event.target.closest('.category-tab');
+  if (!tab) return;
+  const id = tab.dataset.category;
+  if (!id || id === state.selectedCategory) return;
+
+  state.selectedCategory = id;
+  renderCatalog();
+  renderCategoryTabs();
+});
+
 els.refreshBtn.addEventListener('click', refreshProducts);
 
 els.categoryMenuBtn.addEventListener('click', openCategoryMenu);
@@ -579,8 +651,9 @@ els.categoryMenuList.addEventListener('click', (event) => {
   const btn = event.target.closest('.menu-item');
   if (!btn) return;
 
-  state.selectedCategory = btn.dataset.category || 'all';
+  state.selectedCategory = btn.dataset.category;
   renderCatalog();
+  renderCategoryTabs();
   renderCategoryMenu();
   closeCategoryMenu();
 });
