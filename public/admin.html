@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Админка заказов</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="admin-body">
+  <div class="admin-wrap">
+    <h1>Заказы</h1>
+    <div class="admin-login">
+      <input id="password" type="password" placeholder="Пароль админки" />
+      <button id="loadBtn" class="primary-btn">Загрузить</button>
+    </div>
+    <div id="adminStatus" class="status">Введите пароль</div>
+    <div id="orders"></div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('adminStatus');
+    const ordersEl = document.getElementById('orders');
+    const passwordEl = document.getElementById('password');
+
+    function fmtMoney(v) {
+      return new Intl.NumberFormat('ru-RU').format(v || 0) + ' ₽';
+    }
+
+    function fmtDate(v) {
+      try { return new Date(v).toLocaleString('ru-RU'); } catch { return v; }
+    }
+
+    async function loadOrders() {
+      const password = passwordEl.value.trim();
+      statusEl.textContent = 'Загрузка…';
+      ordersEl.innerHTML = '';
+
+      const res = await fetch('/api/orders?password=' + encodeURIComponent(password));
+      const data = await res.json();
+
+      if (!data.ok) {
+        statusEl.textContent = data.error || 'Ошибка';
+        return;
+      }
+
+      statusEl.textContent = 'Заказов: ' + data.orders.length;
+
+      ordersEl.innerHTML = data.orders.map(order => `
+        <section class="order-card">
+          <div class="order-head">
+            <div>
+              <strong>${order.id}</strong>
+              <div class="subtle">${fmtDate(order.createdAt)}</div>
+            </div>
+            <div class="order-totals">
+              <strong>${order.totalQuantity} шт</strong>
+              <div>${fmtMoney(order.totalSum)}</div>
+            </div>
+          </div>
+          <div class="subtle">Клиент: ${order.customer || '—'}</div>
+          <div class="subtle">Комментарий: ${order.comment || '—'}</div>
+          <table class="order-table">
+            <thead><tr><th>Артикул</th><th>Товар</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead>
+            <tbody>
+              ${order.items.map(item => `
+                <tr>
+                  <td>${item.article || '—'}</td>
+                  <td>${item.name}</td>
+                  <td>${item.quantity}</td>
+                  <td>${fmtMoney(item.price)}</td>
+                  <td>${fmtMoney(item.sum)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </section>
+      `).join('');
+    }
+
+    document.getElementById('loadBtn').addEventListener('click', loadOrders);
+  </script>
+</body>
+</html>

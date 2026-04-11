@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Мобильный заказ</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">B2B</div>
+        <h1>Мобильный заказ</h1>
+        <div id="categoryName" class="subtle">Загрузка…</div>
+      </div>
+      <button id="refreshBtn" class="ghost-btn">Актуализировать</button>
+    </header>
+
+    <section class="summary-panel">
+      <div class="summary-item">
+        <div class="summary-label">Товаров</div>
+        <div id="cartCount" class="summary-value">0</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Сумма</div>
+        <div id="cartSum" class="summary-value">0 ₽</div>
+      </div>
+      <button id="submitBtn" class="primary-btn">Отправить заявку</button>
+    </section>
+
+    <main>
+      <div id="status" class="status">Загружаем каталог…</div>
+      <div id="grid" class="product-grid"></div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
