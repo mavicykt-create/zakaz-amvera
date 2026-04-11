@@ -4,7 +4,8 @@ const state = {
   cart: {},
   loading: false,
   sending: false,
-  selectedCategory: 'all'
+  selectedCategory: 'all',
+  loadedAt: null
 };
 
 const STORAGE_KEYS = {
@@ -12,6 +13,8 @@ const STORAGE_KEYS = {
   cart: 'mobile_order_cart_v1',
   pendingOrders: 'mobile_order_pending_orders_v1'
 };
+
+const STALE_MS = 60 * 60 * 1000;
 
 const els = {
   status: document.getElementById('status'),
@@ -51,8 +54,11 @@ function escapeHtml(value) {
 }
 
 function formatPrice(value) {
-  const num = Math.round(Number(value) || 0);
-  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(num)} ₽`;
+  const num = Number(value) || 0;
+  return `${new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(num)} ₽`;
 }
 
 function formatLoadedAt(value) {
@@ -60,15 +66,25 @@ function formatLoadedAt(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Дата обновления неизвестна';
 
-  return `Актуально на ${date.toLocaleDateString('ru-RU')} ${date.toLocaleTimeString('ru-RU', {
+  const base = `Актуально на ${date.toLocaleDateString('ru-RU')} ${date.toLocaleTimeString('ru-RU', {
     hour: '2-digit',
     minute: '2-digit'
   })}`;
+
+  if (Date.now() - date.getTime() > STALE_MS) {
+    return 'Информация не актуальна, требуется обновление информации.';
+  }
+
+  return base;
 }
 
 function setStatus(text, isError = false) {
   els.status.textContent = text || '';
   els.status.classList.toggle('status--error', !!isError);
+}
+
+function refreshStatusFromLoadedAt() {
+  setStatus(formatLoadedAt(state.loadedAt), Date.now() - new Date(state.loadedAt || 0).getTime() > STALE_MS);
 }
 
 function buildImageUrl(url) {
@@ -406,27 +422,29 @@ async function loadProducts() {
 
     state.products = Array.isArray(data.products) ? data.products : [];
     state.categories = Array.isArray(data.categories) ? data.categories : [];
+    state.loadedAt = data.loadedAt || null;
 
     saveCatalog({
       products: state.products,
       categories: state.categories,
-      loadedAt: data.loadedAt || null
+      loadedAt: state.loadedAt
     });
 
     renderCatalog();
     renderCategoryMenu();
     updateTopbar();
-    setStatus(formatLoadedAt(data.loadedAt));
+    refreshStatusFromLoadedAt();
   } catch (error) {
     const cached = loadCatalogFromStorage();
 
     if (cached?.products?.length) {
       state.products = cached.products;
       state.categories = cached.categories || [];
+      state.loadedAt = cached.loadedAt || null;
       renderCatalog();
       renderCategoryMenu();
       updateTopbar();
-      setStatus(`Работаем из сохраненного каталога. ${formatLoadedAt(cached.loadedAt)}`);
+      refreshStatusFromLoadedAt();
     } else {
       setStatus(error.message || 'Ошибка загрузки каталога', true);
     }
@@ -454,17 +472,18 @@ async function refreshProducts() {
 
     state.products = Array.isArray(data.products) ? data.products : [];
     state.categories = Array.isArray(data.categories) ? data.categories : [];
+    state.loadedAt = data.loadedAt || new Date().toISOString();
 
     saveCatalog({
       products: state.products,
       categories: state.categories,
-      loadedAt: data.loadedAt || new Date().toISOString()
+      loadedAt: state.loadedAt
     });
 
     renderCatalog();
     renderCategoryMenu();
     updateTopbar();
-    setStatus(formatLoadedAt(data.loadedAt || new Date().toISOString()));
+    refreshStatusFromLoadedAt();
   } catch (error) {
     setStatus(error.message || 'Ошибка обновления каталога', true);
   } finally {
@@ -593,7 +612,7 @@ document.addEventListener('keydown', (event) => {
 
 window.addEventListener('online', () => {
   flushPendingOrders();
-  setStatus('Сеть восстановлена');
+  refreshStatusFromLoadedAt();
 });
 
 window.addEventListener('offline', () => {
@@ -605,3 +624,6 @@ updateTopbar();
 registerSW();
 loadProducts();
 flushPendingOrders();
+setInterval(() => {
+  if (state.loadedAt) refreshStatusFromLoadedAt();
+}, 60 * 1000);
