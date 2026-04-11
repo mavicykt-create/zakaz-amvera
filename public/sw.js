@@ -1,6 +1,6 @@
-const STATIC_CACHE = 'mobile-order-static-v3';
-const API_CACHE = 'mobile-order-api-v3';
-const IMAGE_CACHE = 'mobile-order-images-v3';
+const STATIC_CACHE = 'mobile-order-static-v5';
+const API_CACHE = 'mobile-order-api-v5';
+const IMAGE_CACHE = 'mobile-order-images-v5';
 const OFFLINE_PAGE = '/offline.html';
 
 const STATIC_ASSETS = [
@@ -9,24 +9,29 @@ const STATIC_ASSETS = [
   '/styles.css',
   '/app.js',
   '/manifest.json',
-  '/offline.html'
+  '/offline.html',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(STATIC_ASSETS))
-  );
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+    await cache.addAll(STATIC_ASSETS);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
+
     await Promise.all(
       keys
         .filter((key) => ![STATIC_CACHE, API_CACHE, IMAGE_CACHE].includes(key))
         .map((key) => caches.delete(key))
     );
+
     await self.clients.claim();
   })());
 });
@@ -35,9 +40,7 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  if (req.method !== 'GET') {
-    return;
-  }
+  if (req.method !== 'GET') return;
 
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirstApi(req));
@@ -50,23 +53,51 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (req.mode === 'navigate') {
-    event.respondWith(navigationFallback(req));
+    event.respondWith(networkFirstPage(req));
     return;
   }
 
-  event.respondWith(cacheFirstStatic(req));
+  event.respondWith(staleWhileRevalidateStatic(req));
 });
 
-async function cacheFirstStatic(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
+async function staleWhileRevalidateStatic(request) {
+  const cache = await caches.open(STATIC_CACHE);
+  const cached = await cache.match(request);
+
+  const networkFetch = fetch(request, { cache: 'no-store' })
+    .then((response) => {
+      if (response && response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => null);
+
+  if (cached) {
+    networkFetch;
+    return cached;
+  }
+
+  const response = await networkFetch;
+  if (response) return response;
+
+  return caches.match(OFFLINE_PAGE);
+}
+
+async function networkFirstPage(request) {
+  const cache = await caches.open(STATIC_CACHE);
 
   try {
-    const response = await fetch(request);
-    const cache = await caches.open(STATIC_CACHE);
-    cache.put(request, response.clone());
+    const response = await fetch(request, { cache: 'no-store' });
+
+    if (response && response.ok) {
+      cache.put('/index.html', response.clone());
+    }
+
     return response;
   } catch {
+    const cached = await cache.match('/index.html');
+    if (cached) return cached;
     return caches.match(OFFLINE_PAGE);
   }
 }
@@ -75,10 +106,12 @@ async function networkFirstApi(request) {
   const cache = await caches.open(API_CACHE);
 
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: 'no-store' });
+
     if (response.ok) {
       cache.put(request, response.clone());
     }
+
     return response;
   } catch {
     const cached = await cache.match(request);
@@ -101,6 +134,7 @@ async function networkFirstApi(request) {
 async function cacheFirstImage(request) {
   const cache = await caches.open(IMAGE_CACHE);
   const cached = await cache.match(request);
+
   if (cached) return cached;
 
   try {
@@ -111,18 +145,5 @@ async function cacheFirstImage(request) {
     return response;
   } catch {
     return new Response('', { status: 404 });
-  }
-}
-
-async function navigationFallback(request) {
-  try {
-    const response = await fetch(request);
-    const cache = await caches.open(STATIC_CACHE);
-    cache.put(request, response.clone());
-    return response;
-  } catch {
-    const cached = await caches.match('/index.html');
-    if (cached) return cached;
-    return caches.match(OFFLINE_PAGE);
   }
 }
