@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Загрузка CommerceML</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#f5f5f7; margin:0; padding:24px; }
+    .box { max-width:640px; margin:0 auto; background:#fff; border-radius:24px; padding:24px; box-shadow:0 10px 30px rgba(0,0,0,.08); }
+    h1 { margin-top:0; font-size:28px; }
+    p { color:#666; line-height:1.5; }
+    input, button { font: inherit; }
+    input[type=file], input[type=password] { width:100%; margin:12px 0; padding:12px; border:1px solid #ddd; border-radius:12px; }
+    button { border:0; border-radius:14px; padding:14px 18px; background:#111; color:#fff; cursor:pointer; }
+    pre { background:#f7f7f8; padding:14px; border-radius:14px; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Загрузка CommerceML</h1>
+    <p>Загрузи ZIP-архив из 1С. Внутри должны быть <b>import.xml</b>, <b>offers.xml</b> и папка с изображениями.</p>
+
+    <input id="password" type="password" placeholder="Пароль администратора">
+    <input id="archive" type="file" accept=".zip">
+    <button id="send">Загрузить архив</button>
+
+    <pre id="result">Ожидаю загрузку...</pre>
+  </div>
+
+  <script>
+    document.getElementById('send').addEventListener('click', async () => {
+      const file = document.getElementById('archive').files[0];
+      const password = document.getElementById('password').value.trim();
+      const result = document.getElementById('result');
+
+      if (!file) {
+        result.textContent = 'Выбери ZIP-архив.';
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('archive', file);
+
+      result.textContent = 'Загружаю...';
+
+      try {
+        const res = await fetch('/api/commerceml/upload-zip', {
+          method: 'POST',
+          headers: { 'x-admin-password': password },
+          body: formData
+        });
+
+        const data = await res.json();
+        result.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        result.textContent = 'Ошибка загрузки: ' + (e?.message || e);
+      }
+    });
+  </script>
+</body>
+</html>
