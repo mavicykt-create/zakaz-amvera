@@ -5,7 +5,14 @@ const state = {
   loading: false,
   sending: false,
   isFresh: false,
-  selectedCategory: 'all'
+  selectedCategory: 'all',
+  deferredPrompt: null
+};
+
+const STORAGE_KEYS = {
+  catalog: 'mobile_order_catalog_v1',
+  cart: 'mobile_order_cart_v1',
+  pendingOrders: 'mobile_order_pending_orders_v1'
 };
 
 const els = {
@@ -79,6 +86,74 @@ function updateFreshness(isFresh) {
 
 function updateTopbar() {
   els.basketSum.textContent = formatPrice(getTotalSum());
+}
+
+function saveCart() {
+  localStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(state.cart));
+}
+
+function loadCart() {
+  try {
+    state.cart = JSON.parse(localStorage.getItem(STORAGE_KEYS.cart) || '{}');
+  } catch {
+    state.cart = {};
+  }
+}
+
+function saveCatalog(data) {
+  localStorage.setItem(STORAGE_KEYS.catalog, JSON.stringify(data));
+}
+
+function loadCatalogFromStorage() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.catalog) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function getPendingOrders() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.pendingOrders) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function setPendingOrders(list) {
+  localStorage.setItem(STORAGE_KEYS.pendingOrders, JSON.stringify(list));
+}
+
+function addPendingOrder(order) {
+  const list = getPendingOrders();
+  list.push(order);
+  setPendingOrders(list);
+}
+
+async function flushPendingOrders() {
+  const list = getPendingOrders();
+  if (!list.length) return;
+
+  const remaining = [];
+
+  for (const order of list) {
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(order)
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        remaining.push(order);
+      }
+    } catch {
+      remaining.push(order);
+    }
+  }
+
+  setPendingOrders(remaining);
 }
 
 function showSuccess(text) {
@@ -245,6 +320,7 @@ function closeBasket() {
 
 function addToCart(productId) {
   state.cart[productId] = (state.cart[productId] || 0) + 1;
+  saveCart();
   updateAllBadges();
   updateTopbar();
 }
@@ -259,6 +335,7 @@ function changeCartQty(productId, delta) {
     state.cart[productId] = next;
   }
 
+  saveCart();
   updateAllBadges();
   updateTopbar();
   renderBasket();
@@ -266,6 +343,7 @@ function changeCartQty(productId, delta) {
 
 function clearCart() {
   state.cart = {};
+  saveCart();
   updateAllBadges();
   updateTopbar();
   renderBasket();
@@ -287,6 +365,12 @@ async function loadProducts() {
     state.products = Array.isArray(data.products) ? data.products : [];
     state.categories = Array.isArray(data.categories) ? data.categories : [];
 
+    saveCatalog({
+      products: state.products,
+      categories: state.categories,
+      loadedAt: data.loadedAt || null
+    });
+
     const isFresh = data.loadedAt
       ? (Date.now() - new Date(data.loadedAt).getTime() < 6 * 60 * 60 * 1000)
       : false;
@@ -302,8 +386,20 @@ async function loadProducts() {
         : `Категорий: ${state.categories.length}, товаров: ${state.products.length}`
     );
   } catch (error) {
-    updateFreshness(false);
-    setStatus(error.message || 'Ошибка загрузки каталога', true);
+    const cached = loadCatalogFromStorage();
+
+    if (cached?.products?.length) {
+      state.products = cached.products;
+      state.categories = cached.categories || [];
+      fillCategoryMenu();
+      renderCatalog();
+      updateTopbar();
+      updateFreshness(false);
+      setStatus('Работаем из сохраненного каталога');
+    } else {
+      updateFreshness(false);
+      setStatus(error.message || 'Ошибка загрузки каталога', true);
+    }
   } finally {
     state.loading = false;
     els.refreshBtn.disabled = false;
@@ -329,11 +425,16 @@ async function refreshProducts() {
     state.products = Array.isArray(data.products) ? data.products : [];
     state.categories = Array.isArray(data.categories) ? data.categories : [];
 
+    saveCatalog({
+      products: state.products,
+      categories: state.categories,
+      loadedAt: data.loadedAt || new Date().toISOString()
+    });
+
     updateFreshness(true);
     fillCategoryMenu();
     renderCatalog();
     updateTopbar();
-
     setStatus(`Категорий: ${state.categories.length}, товаров: ${state.products.length}`);
   } catch (error) {
     updateFreshness(false);
@@ -344,21 +445,25 @@ async function refreshProducts() {
 }
 
 async function sendOrder() {
-  const items = Object.entries(state.cart).map(([id, quantity]) => {
-    const product = getProductById(id);
-    if (!product) return null;
+  const orderPayload = {
+    items: Object.entries(state.cart).map(([id, quantity]) => {
+      const product = getProductById(id);
+      if (!product) return null;
 
-    return {
-      id: product.id,
-      vendorCode: product.vendorCode,
-      name: product.name,
-      quantity,
-      cartPrice: product.cartPrice,
-      displayPrice: product.displayPrice
-    };
-  }).filter(Boolean);
+      return {
+        id: product.id,
+        vendorCode: product.vendorCode,
+        name: product.name,
+        quantity,
+        cartPrice: product.cartPrice,
+        displayPrice: product.displayPrice
+      };
+    }).filter(Boolean),
+    phone: els.phoneInput.value.trim(),
+    comment: els.commentInput.value.trim()
+  };
 
-  if (!items.length) {
+  if (!orderPayload.items.length) {
     setStatus('Корзина пустая', true);
     return;
   }
@@ -372,11 +477,7 @@ async function sendOrder() {
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        items,
-        phone: els.phoneInput.value.trim(),
-        comment: els.commentInput.value.trim()
-      })
+      body: JSON.stringify(orderPayload)
     });
 
     const data = await res.json();
@@ -391,13 +492,33 @@ async function sendOrder() {
     closeBasket();
     setStatus(`Заказ отправлен: ${data.orderId}`);
     showSuccess('Заказ отправлен');
-  } catch (error) {
-    setStatus(error.message || 'Ошибка отправки заказа', true);
+  } catch {
+    addPendingOrder(orderPayload);
+    clearCart();
+    els.phoneInput.value = '';
+    els.commentInput.value = '';
+    closeBasket();
+    setStatus('Нет сети. Заказ сохранен и отправится позже.');
+    showSuccess('Заказ сохранен локально');
   } finally {
     state.sending = false;
     els.sendBtn.textContent = 'Отправить заказ';
     renderBasket();
   }
+}
+
+async function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    await navigator.serviceWorker.register('/sw.js');
+  } catch {}
+}
+
+function setupInstallPrompt() {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    state.deferredPrompt = e;
+  });
 }
 
 els.catalogRoot.addEventListener('click', (event) => {
@@ -435,4 +556,18 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeBasket();
 });
 
+window.addEventListener('online', () => {
+  flushPendingOrders();
+  setStatus('Сеть восстановлена');
+});
+
+window.addEventListener('offline', () => {
+  setStatus('Нет сети. Работаем с сохраненными данными.');
+});
+
+loadCart();
+updateTopbar();
+registerSW();
+setupInstallPrompt();
 loadProducts();
+flushPendingOrders();
