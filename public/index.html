@@ -13,10 +13,12 @@
     <div class="topbar__inner">
       <div class="topbar__left">
         <h1 class="topbar__title">Мобильный заказ</h1>
-        <div class="topbar__meta-row">
-          <div class="topbar__meta">
-            <div class="topbar__meta-label">Товаров</div>
-            <div class="topbar__meta-value" id="total-items">0</div>
+
+        <div class="topbar__controls">
+          <div class="category-menu-wrap">
+            <select class="category-menu" id="category-select">
+              <option value="all">Все категории</option>
+            </select>
           </div>
 
           <button class="basket-pill" id="basket-open-btn" type="button">
@@ -37,7 +39,7 @@
   </header>
 
   <main class="page">
-    <section class="grid" id="product-grid"></section>
+    <div id="catalog-root"></div>
   </main>
 
   <div class="modal" id="basket-modal" aria-hidden="true">
@@ -54,7 +56,6 @@
 
       <div class="modal__content">
         <div class="basket-list" id="basket-list"></div>
-
         <div class="basket-empty" id="basket-empty">Корзина пустая</div>
 
         <div class="form-block">
