@@ -54,6 +54,15 @@ function buildImageUrl(url) {
   return `/img?url=${encodeURIComponent(url)}`;
 }
 
+function showSuccess(text) {
+  els.success.textContent = text;
+  els.success.classList.add('is-visible');
+
+  window.setTimeout(() => {
+    els.success.classList.remove('is-visible');
+  }, 2500);
+}
+
 function renderProducts() {
   if (!state.products.length) {
     els.grid.innerHTML = '';
@@ -89,13 +98,28 @@ function renderProducts() {
     .join('');
 }
 
-function showSuccess(text) {
-  els.success.textContent = text;
-  els.success.classList.add('is-visible');
+function getCardById(productId) {
+  if (!productId) return null;
+  return els.grid.querySelector(`.product-card[data-id="${productId}"]`);
+}
 
-  window.setTimeout(() => {
-    els.success.classList.remove('is-visible');
-  }, 2500);
+function updateCardQty(productId) {
+  const card = getCardById(productId);
+  if (!card) return;
+
+  const qtyEl = card.querySelector('.product-card__qty');
+  if (!qtyEl) return;
+
+  const qty = state.cart[productId] || 0;
+  qtyEl.textContent = qty > 0 ? String(qty) : '';
+  qtyEl.classList.toggle('is-visible', qty > 0);
+}
+
+function clearAllCardBadges() {
+  els.grid.querySelectorAll('.product-card__qty').forEach((qtyEl) => {
+    qtyEl.textContent = '';
+    qtyEl.classList.remove('is-visible');
+  });
 }
 
 async function loadProducts() {
@@ -164,13 +188,13 @@ async function refreshProducts() {
 
 function addToCart(productId) {
   state.cart[productId] = (state.cart[productId] || 0) + 1;
-  renderProducts();
+  updateCardQty(productId);
   updateSummary();
 }
 
 function clearCart() {
   state.cart = {};
-  renderProducts();
+  clearAllCardBadges();
   updateSummary();
 }
 
@@ -206,7 +230,9 @@ async function sendOrder() {
       throw new Error(data.error || 'Не удалось отправить заявку');
     }
 
-    clearCart();
+    state.cart = {};
+    clearAllCardBadges();
+    updateSummary();
     setStatus(`Заявка отправлена: ${data.orderId}`);
     showSuccess('Заявка отправлена');
   } catch (error) {
