@@ -9,7 +9,7 @@ import { parseStringPromise } from 'xml2js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
+const PRICE_YML_URL = process.env.PRICE_YML_URL || 'https://milku.ru/site1/export-yandex-yandexfeed/';
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const YML_URL = process.env.YML_URL || 'https://milku.ru/site1/export-yandex-YML/';
