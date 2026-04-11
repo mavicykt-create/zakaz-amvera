@@ -13,13 +13,14 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+
 const YML_URL = process.env.YML_URL || 'https://milku.ru/site1/export-yandex-YML/';
-const PRICE_YML_URL =
-  process.env.PRICE_YML_URL || 'https://milku.ru/site1/export-yandex-yandexfeed/';
-const CATEGORY_ID = String(process.env.CATEGORY_ID || '54');
+const DISPLAY_PRICE_URL =
+  process.env.DISPLAY_PRICE_URL || 'https://milku.ru/site1/export-yandex-yandexfeed/';
+
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '12345');
-const IMAGE_WIDTH = Number(process.env.IMAGE_WIDTH || 320);
-const IMAGE_QUALITY = Number(process.env.IMAGE_QUALITY || 70);
+const IMAGE_WIDTH = Number(process.env.IMAGE_WIDTH || 220);
+const IMAGE_QUALITY = Number(process.env.IMAGE_QUALITY || 42);
 const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS || 6 * 60 * 60 * 1000);
 
 const DATA_DIR = path.join(__dirname, 'data');
@@ -29,8 +30,7 @@ const IMAGE_CACHE_DIR = path.join(DATA_DIR, 'cache');
 
 let catalogState = {
   loadedAt: null,
-  categoryId: CATEGORY_ID,
-  categoryName: '',
+  categoryName: 'Весь ассортимент',
   products: [],
   totalOffers: 0,
   error: null
@@ -80,19 +80,15 @@ function parseDateToRu(raw) {
   if (!text) return '';
 
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) {
-    return `${iso[3]}.${iso[2]}.${iso[1].slice(2)}`;
-  }
+  if (iso) return `${iso[3]}.${iso[2]}.${iso[1].slice(2)}`;
+
+  const fullIso = text.match(/^(\d{4})-(\d{2})-(\d{2})[T\s]/);
+  if (fullIso) return `${fullIso[3]}.${fullIso[2]}.${fullIso[1].slice(2)}`;
 
   const ru = text.match(/^(\d{2})\.(\d{2})\.(\d{2,4})$/);
   if (ru) {
     const yy = ru[3].length === 4 ? ru[3].slice(2) : ru[3];
     return `${ru[1]}.${ru[2]}.${yy}`;
-  }
-
-  const fullIso = text.match(/^(\d{4})-(\d{2})-(\d{2})[T\s]/);
-  if (fullIso) {
-    return `${fullIso[3]}.${fullIso[2]}.${fullIso[1].slice(2)}`;
   }
 
   const date = new Date(text);
@@ -107,8 +103,7 @@ function parseDateToRu(raw) {
 }
 
 function extractShelfLife(params) {
-  const raw = getParamValue(params, 'Срок годности');
-  return parseDateToRu(raw);
+  return parseDateToRu(getParamValue(params, 'Срок годности'));
 }
 
 function simpleHash(input) {
@@ -117,9 +112,7 @@ function simpleHash(input) {
 
 async function fetchText(url) {
   const response = await fetch(url, {
-    headers: {
-      'user-agent': 'Mozilla/5.0 Mobile Order Bot'
-    }
+    headers: { 'user-agent': 'Mozilla/5.0 Mobile Order Bot' }
   });
 
   if (!response.ok) {
@@ -129,8 +122,8 @@ async function fetchText(url) {
   return response.text();
 }
 
-async function loadReferencePrices() {
-  const xml = await fetchText(PRICE_YML_URL);
+async function loadDisplayPrices() {
+  const xml = await fetchText(DISPLAY_PRICE_URL);
   const parsed = await parseStringPromise(xml, {
     explicitArray: false,
     mergeAttrs: false,
@@ -143,26 +136,25 @@ async function loadReferencePrices() {
   }
 
   const offersRaw = normalizeArray(shop.offers?.offer);
-  const priceMap = new Map();
+  const map = new Map();
 
   for (const offer of offersRaw) {
     const vendorCode = firstText(offer.vendorCode);
-    const price = Number(firstText(offer.price)) || 0;
+    const displayPrice = Number(firstText(offer.price)) || 0;
     if (vendorCode) {
-      priceMap.set(vendorCode, price);
+      map.set(vendorCode, displayPrice);
     }
   }
 
-  return priceMap;
+  return map;
 }
 
-function mapOffer(offer, referencePriceMap = new Map(), categoryName = '') {
+function mapOffer(offer, displayPriceMap = new Map(), categoryName = '') {
   const vendorCode = firstText(offer.vendorCode);
-  const fallbackPrice = Number(firstText(offer.price)) || 0;
-  const referencePrice =
-    vendorCode && referencePriceMap.has(vendorCode)
-      ? referencePriceMap.get(vendorCode)
-      : fallbackPrice;
+  const cartPrice = Number(firstText(offer.price)) || 0;
+  const displayPrice = vendorCode && displayPriceMap.has(vendorCode)
+    ? Number(displayPriceMap.get(vendorCode)) || 0
+    : 0;
 
   const categoryId = firstText(offer.categoryId);
   const picture = firstText(offer.picture);
@@ -171,8 +163,6 @@ function mapOffer(offer, referencePriceMap = new Map(), categoryName = '') {
     firstText(offer.model) ||
     `Товар ${firstText(offer?.$?.id) || ''}`;
 
-  const shelfLife = extractShelfLife(offer.param);
-
   return {
     id:
       firstText(offer?.$?.id) ||
@@ -180,20 +170,21 @@ function mapOffer(offer, referencePriceMap = new Map(), categoryName = '') {
       `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     vendorCode,
     name,
-    referencePrice,
+    image: picture,
     categoryId,
     categoryName,
-    image: picture,
     available: String(offer?.$?.available || 'true') !== 'false',
-    shelfLife
+    shelfLife: extractShelfLife(offer.param),
+    cartPrice,
+    displayPrice
   };
 }
 
 async function refreshCatalog() {
   try {
-    const [xml, priceMap] = await Promise.all([
+    const [xml, displayPriceMap] = await Promise.all([
       fetchText(YML_URL),
-      loadReferencePrices()
+      loadDisplayPrices()
     ]);
 
     const parsed = await parseStringPromise(xml, {
@@ -210,17 +201,21 @@ async function refreshCatalog() {
       name: typeof c === 'string' ? cleanText(c) : cleanText(c?._)
     }));
 
-    const category = categories.find((c) => c.id === CATEGORY_ID);
+    const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
     const offersRaw = normalizeArray(shop.offers?.offer);
 
-    const products = offersRaw
-      .map((offer) => mapOffer(offer, priceMap, category?.name || `Категория ${CATEGORY_ID}`))
-      .filter((item) => String(item.categoryId) === CATEGORY_ID);
+    const products = offersRaw.map((offer) => {
+      const categoryId = firstText(offer.categoryId);
+      return mapOffer(
+        offer,
+        displayPriceMap,
+        categoryMap.get(categoryId) || `Категория ${categoryId || ''}`
+      );
+    });
 
     catalogState = {
       loadedAt: new Date().toISOString(),
-      categoryId: CATEGORY_ID,
-      categoryName: category?.name || `Категория ${CATEGORY_ID}`,
+      categoryName: 'Весь ассортимент',
       products,
       totalOffers: offersRaw.length,
       error: null
@@ -280,14 +275,17 @@ async function readImageCache(key) {
 }
 
 app.get('/api/health', (req, res) => {
+  const loadedAtTs = catalogState.loadedAt ? new Date(catalogState.loadedAt).getTime() : 0;
+  const isFresh = loadedAtTs ? Date.now() - loadedAtTs < CACHE_TTL_MS : false;
+
   res.json({
     ok: true,
     ymlUrl: YML_URL,
-    priceYmlUrl: PRICE_YML_URL,
-    categoryId: CATEGORY_ID,
+    displayPriceUrl: DISPLAY_PRICE_URL,
     loadedAt: catalogState.loadedAt,
     products: catalogState.products.length,
-    error: catalogState.error
+    error: catalogState.error,
+    isFresh
   });
 });
 
@@ -295,7 +293,6 @@ app.get('/api/products', async (req, res) => {
   if (!catalogState.products.length && !catalogState.error) {
     await refreshCatalog();
   }
-
   res.json({ ok: true, ...catalogState });
 });
 
@@ -305,7 +302,7 @@ app.post('/api/refresh', async (req, res) => {
 });
 
 app.post('/api/orders', async (req, res) => {
-  const { items = [], customer = '', comment = '' } = req.body || {};
+  const { items = [], customer = '', comment = '', phone = '' } = req.body || {};
 
   if (!Array.isArray(items) || !items.length) {
     return res.status(400).json({ ok: false, error: 'Пустой заказ' });
@@ -313,13 +310,20 @@ app.post('/api/orders', async (req, res) => {
 
   const normalizedItems = items
     .filter((item) => Number(item.quantity) > 0)
-    .map((item) => ({
-      id: String(item.id || ''),
-      name: cleanText(item.name),
-      quantity: Number(item.quantity) || 0,
-      price: 0,
-      sum: 0
-    }))
+    .map((item) => {
+      const quantity = Number(item.quantity) || 0;
+      const cartPrice = Number(item.cartPrice) || 0;
+
+      return {
+        id: String(item.id || ''),
+        vendorCode: cleanText(item.vendorCode),
+        name: cleanText(item.name),
+        quantity,
+        cartPrice,
+        displayPrice: Number(item.displayPrice) || 0,
+        sum: quantity * cartPrice
+      };
+    })
     .filter((item) => item.quantity > 0);
 
   if (!normalizedItems.length) {
@@ -332,15 +336,16 @@ app.post('/api/orders', async (req, res) => {
     createdAt: new Date().toISOString(),
     customer: cleanText(customer),
     comment: cleanText(comment),
+    phone: cleanText(phone),
     items: normalizedItems,
     totalQuantity: normalizedItems.reduce((sum, i) => sum + i.quantity, 0),
-    totalSum: 0
+    totalSum: normalizedItems.reduce((sum, i) => sum + i.sum, 0)
   };
 
   orders.unshift(order);
   await writeOrders(orders);
 
-  res.json({ ok: true, orderId: order.id });
+  res.json({ ok: true, orderId: order.id, totalSum: order.totalSum });
 });
 
 app.get('/api/orders', requireAdmin, async (req, res) => {
