@@ -64,11 +64,17 @@ function getParamValue(params, name) {
 
 function extractShelfLife(params) {
   const raw = getParamValue(params, 'Срок годности');
-  if (!raw) return { raw: '', days: null };
-  const normalized = raw.replace(',', '.');
-  const num = normalized.match(/(\d+(?:\.\d+)?)/);
-  const days = num ? Number(num[1]) : null;
-  return { raw, days: Number.isFinite(days) ? days : null };
+  if (!raw) return { raw: '', date: '' };
+
+  const d = new Date(raw);
+  if (!isNaN(d)) {
+    return {
+      raw,
+      date: d.toLocaleDateString('ru-RU')
+    };
+  }
+
+  return { raw, date: raw };
 }
 
 function shelfLifeBadge(days, raw) {
