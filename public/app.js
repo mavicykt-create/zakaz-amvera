@@ -1,202 +1,235 @@
 const state = {
   products: [],
-  cart: new Map(),
-  categoryName: ''
+  categoryName: '',
+  cart: {},
+  loading: false,
+  sending: false
 };
 
-const gridEl = document.getElementById('grid');
-const statusEl = document.getElementById('status');
-const toastEl = document.getElementById('toast');
-const categoryNameEl = document.getElementById('categoryName');
-const cartCountEl = document.getElementById('cartCount');
-const cartSumEl = document.getElementById('cartSum');
-const refreshBtn = document.getElementById('refreshBtn');
-const submitBtn = document.getElementById('submitBtn');
+const els = {
+  title: document.getElementById('page-title'),
+  category: document.getElementById('category-name'),
+  status: document.getElementById('status'),
+  grid: document.getElementById('product-grid'),
+  totalItems: document.getElementById('total-items'),
+  sendBtn: document.getElementById('send-order-btn'),
+  refreshBtn: document.getElementById('refresh-btn'),
+  clearBtn: document.getElementById('clear-btn'),
+  success: document.getElementById('success-message')
+};
 
-function money(value) {
-  return new Intl.NumberFormat('ru-RU').format(Number(value || 0)) + ' ₽';
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-function showToast(text) {
-  toastEl.textContent = text;
-  toastEl.classList.add('show');
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => toastEl.classList.remove('show'), 1800);
+function formatPrice(value) {
+  const num = Number(value) || 0;
+  if (!num) return '';
+  return `${new Intl.NumberFormat('ru-RU').format(num)} ₽`;
 }
 
-function quantityOf(id) {
-  return state.cart.get(id)?.quantity || 0;
+function getTotalItems() {
+  return Object.values(state.cart).reduce((sum, qty) => sum + qty, 0);
 }
 
 function updateSummary() {
-  let totalQty = 0;
-  let totalSum = 0;
-  for (const item of state.cart.values()) {
-    totalQty += item.quantity;
-    totalSum += item.quantity * item.price;
-  }
-  cartCountEl.textContent = totalQty;
-  cartSumEl.textContent = money(totalSum);
+  const totalItems = getTotalItems();
+  els.totalItems.textContent = totalItems;
+  els.sendBtn.disabled = totalItems === 0 || state.sending;
+  els.clearBtn.disabled = totalItems === 0 || state.sending;
 }
 
-function shelfClass(tone) {
-  return tone === 'danger' ? 'badge-danger' : tone === 'warn' ? 'badge-warn' : tone === 'ok' ? 'badge-ok' : 'badge-none';
+function setStatus(text, isError = false) {
+  els.status.textContent = text || '';
+  els.status.classList.toggle('status--error', !!isError);
 }
 
-function render() {
+function buildImageUrl(url) {
+  if (!url) return '';
+  return `/img?url=${encodeURIComponent(url)}`;
+}
+
+function renderProducts() {
   if (!state.products.length) {
-    gridEl.innerHTML = '';
-    statusEl.textContent = 'Нет товаров';
+    els.grid.innerHTML = '';
     return;
   }
 
-  statusEl.textContent = '';
+  els.grid.innerHTML = state.products
+    .map((product) => {
+      const qty = state.cart[product.id] || 0;
 
-  gridEl.innerHTML = state.products.map((item) => {
-    const qty = quantityOf(item.id);
-    const image = item.image ? `/img?url=${encodeURIComponent(item.image)}` : '';
-    return `
-      <article class="card">
-        <button class="img-btn" data-add="${item.id}">
-          ${image
-            ? `<img src="${image}" alt="${item.name}" loading="lazy" decoding="async" />`
-            : `<div class="img-placeholder">Нет фото</div>`}
-        </button>
-
-        <div class="card-body">
-          <div class="name" title="${item.name}">${item.name}</div>
-          <div class="article">${item.article || item.id}</div>
-
-          <div class="meta-row">
-            <div class="price">${money(item.price)}</div>
-            <div class="badge ${shelfClass(item.shelfLifeBadge?.tone)}" title="${item.shelfLifeRaw || 'Срок не указан'}">
-              ${item.shelfLifeBadge?.text || '—'}
+      return `
+        <button class="product-card" data-id="${escapeHtml(product.id)}" type="button">
+          <div class="product-card__image-wrap">
+            ${
+              product.image
+                ? `<img class="product-card__image" src="${buildImageUrl(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy">`
+                : `<div class="product-card__image product-card__image--placeholder">Нет фото</div>`
+            }
+            <div class="product-card__qty ${qty > 0 ? 'is-visible' : ''}">
+              ${qty > 0 ? qty : ''}
             </div>
           </div>
 
-          <div class="qty-row">
-            <button class="qty-btn" data-minus="${item.id}">−</button>
-            <div class="qty">${qty}</div>
-            <button class="qty-btn" data-add="${item.id}">+</button>
+          <div class="product-card__body">
+            <div class="product-card__name">${escapeHtml(product.name)}</div>
+            <div class="product-card__category">${escapeHtml(product.categoryName || state.categoryName || '')}</div>
+            <div class="product-card__price">${escapeHtml(formatPrice(product.referencePrice))}</div>
+            <div class="product-card__shelf">${escapeHtml(product.shelfLife || '')}</div>
           </div>
-        </div>
-      </article>
-    `;
-  }).join('');
+        </button>
+      `;
+    })
+    .join('');
 }
 
-function addItem(id) {
-  const product = state.products.find((p) => p.id === id);
-  if (!product) return;
+function showSuccess(text) {
+  els.success.textContent = text;
+  els.success.classList.add('is-visible');
 
-  const current = state.cart.get(id) || {
-    id: product.id,
-    article: product.article,
-    name: product.name,
-    price: product.price,
-    quantity: 0
-  };
+  window.setTimeout(() => {
+    els.success.classList.remove('is-visible');
+  }, 2500);
+}
 
-  current.quantity += 1;
-  state.cart.set(id, current);
+async function loadProducts() {
+  state.loading = true;
+  setStatus('Загружаем каталог...');
+  els.refreshBtn.disabled = true;
+
+  try {
+    const res = await fetch('/api/products', { cache: 'no-store' });
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Не удалось загрузить товары');
+    }
+
+    state.products = Array.isArray(data.products) ? data.products : [];
+    state.categoryName = data.categoryName || '';
+
+    els.category.textContent = state.categoryName || 'Категория';
+    setStatus(
+      data.error
+        ? `Каталог загружен из кеша. ${data.error}`
+        : `Товаров: ${state.products.length}`
+    );
+
+    renderProducts();
+    updateSummary();
+  } catch (error) {
+    setStatus(error.message || 'Ошибка загрузки каталога', true);
+  } finally {
+    state.loading = false;
+    els.refreshBtn.disabled = false;
+  }
+}
+
+async function refreshProducts() {
+  setStatus('Обновляем каталог...');
+  els.refreshBtn.disabled = true;
+
+  try {
+    const res = await fetch('/api/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Не удалось обновить каталог');
+    }
+
+    state.products = Array.isArray(data.products) ? data.products : [];
+    state.categoryName = data.categoryName || '';
+
+    els.category.textContent = state.categoryName || 'Категория';
+    setStatus(`Каталог обновлён. Товаров: ${state.products.length}`);
+
+    renderProducts();
+    updateSummary();
+  } catch (error) {
+    setStatus(error.message || 'Ошибка обновления каталога', true);
+  } finally {
+    els.refreshBtn.disabled = false;
+  }
+}
+
+function addToCart(productId) {
+  state.cart[productId] = (state.cart[productId] || 0) + 1;
+  renderProducts();
   updateSummary();
-  render();
 }
 
-function minusItem(id) {
-  const current = state.cart.get(id);
-  if (!current) return;
-  current.quantity -= 1;
-  if (current.quantity <= 0) state.cart.delete(id);
-  else state.cart.set(id, current);
+function clearCart() {
+  state.cart = {};
+  renderProducts();
   updateSummary();
-  render();
 }
 
-gridEl.addEventListener('click', (e) => {
-  const addId = e.target.closest('[data-add]')?.dataset.add;
-  const minusId = e.target.closest('[data-minus]')?.dataset.minus;
+async function sendOrder() {
+  const items = state.products
+    .filter((product) => (state.cart[product.id] || 0) > 0)
+    .map((product) => ({
+      id: product.id,
+      name: product.name,
+      quantity: state.cart[product.id]
+    }));
 
-  if (addId) addItem(addId);
-  if (minusId) minusItem(minusId);
-});
-
-async function loadProducts(silent = false) {
-  if (!silent) statusEl.textContent = 'Загрузка каталога…';
-  const res = await fetch('/api/products');
-  const data = await res.json();
-
-  if (!data.ok && !data.products) {
-    statusEl.textContent = data.error || 'Ошибка загрузки';
-    return;
-  }
-
-  state.products = data.products || [];
-  state.categoryName = data.categoryName || '';
-  categoryNameEl.textContent = data.categoryName
-    ? `${data.categoryName} · ${state.products.length} товаров`
-    : `${state.products.length} товаров`;
-
-  if (data.error) {
-    statusEl.textContent = `Каталог загружен из кеша. ${data.error}`;
-  }
-
-  render();
-}
-
-async function refreshCatalog() {
-  refreshBtn.disabled = true;
-  refreshBtn.textContent = 'Обновляем…';
-  const res = await fetch('/api/refresh', { method: 'POST' });
-  const data = await res.json();
-  refreshBtn.disabled = false;
-  refreshBtn.textContent = 'Актуализировать';
-
-  if (!data.ok) {
-    showToast(data.error || 'Не удалось обновить');
-  } else {
-    showToast('Каталог обновлён');
-  }
-  await loadProducts(true);
-}
-
-async function submitOrder() {
-  const items = Array.from(state.cart.values());
   if (!items.length) {
-    showToast('Корзина пустая');
+    setStatus('Нет выбранных товаров', true);
     return;
   }
 
-  const customer = prompt('Название клиента / магазина');
-  const comment = prompt('Комментарий к заявке', '') || '';
-
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Отправляем…';
+  state.sending = true;
+  updateSummary();
+  els.sendBtn.textContent = 'Отправляем...';
+  setStatus('Отправляем заявку...');
 
   try {
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer: customer || '', comment, items })
+      body: JSON.stringify({ items })
     });
+
     const data = await res.json();
 
-    if (!data.ok) throw new Error(data.error || 'Ошибка отправки');
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Не удалось отправить заявку');
+    }
 
-    state.cart.clear();
-    updateSummary();
-    render();
-    showToast(`Заявка ${data.orderId} отправлена`);
-  } catch (e) {
-    showToast(e.message || 'Ошибка');
+    clearCart();
+    setStatus(`Заявка отправлена: ${data.orderId}`);
+    showSuccess('Заявка отправлена');
+  } catch (error) {
+    setStatus(error.message || 'Ошибка отправки заявки', true);
   } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Отправить заявку';
+    state.sending = false;
+    els.sendBtn.textContent = 'Отправить заявку';
+    updateSummary();
   }
 }
 
-refreshBtn.addEventListener('click', refreshCatalog);
-submitBtn.addEventListener('click', submitOrder);
+els.grid.addEventListener('click', (event) => {
+  const card = event.target.closest('.product-card');
+  if (!card) return;
+
+  const id = card.dataset.id;
+  if (!id) return;
+
+  addToCart(id);
+});
+
+els.refreshBtn.addEventListener('click', refreshProducts);
+els.clearBtn.addEventListener('click', clearCart);
+els.sendBtn.addEventListener('click', sendOrder);
 
 loadProducts();
-updateSummary();
