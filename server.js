@@ -6,13 +6,16 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseStringPromise } from 'xml2js';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PRICE_YML_URL = process.env.PRICE_YML_URL || 'https://milku.ru/site1/export-yandex-yandexfeed/';
+
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const YML_URL = process.env.YML_URL || 'https://milku.ru/site1/export-yandex-YML/';
+const PRICE_YML_URL =
+  process.env.PRICE_YML_URL || 'https://milku.ru/site1/export-yandex-yandexfeed/';
 const CATEGORY_ID = String(process.env.CATEGORY_ID || '54');
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '12345');
 const IMAGE_WIDTH = Number(process.env.IMAGE_WIDTH || 320);
@@ -40,7 +43,12 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 async function ensureStorage() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.mkdir(IMAGE_CACHE_DIR, { recursive: true });
-  try { await fs.access(ORDERS_FILE); } catch { await fs.writeFile(ORDERS_FILE, '[]', 'utf8'); }
+
+  try {
+    await fs.access(ORDERS_FILE);
+  } catch {
+    await fs.writeFile(ORDERS_FILE, '[]', 'utf8');
+  }
 }
 
 function normalizeArray(value) {
@@ -51,6 +59,11 @@ function normalizeArray(value) {
 function cleanText(value) {
   if (value == null) return '';
   return String(value).replace(/\s+/g, ' ').trim();
+}
+
+function firstText(value) {
+  if (Array.isArray(value)) return cleanText(value[0]);
+  return cleanText(value);
 }
 
 function getParamValue(params, name) {
@@ -66,22 +79,27 @@ function parseDateToRu(raw) {
   const text = cleanText(raw);
   if (!text) return '';
 
-  const direct = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (direct) {
-    return `${direct[3]}.${direct[2]}.${direct[1].slice(2)}`;
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    return `${iso[3]}.${iso[2]}.${iso[1].slice(2)}`;
   }
 
   const ru = text.match(/^(\d{2})\.(\d{2})\.(\d{2,4})$/);
   if (ru) {
-    const year = ru[3].length === 4 ? ru[3].slice(2) : ru[3];
-    return `${ru[1]}.${ru[2]}.${year}`;
+    const yy = ru[3].length === 4 ? ru[3].slice(2) : ru[3];
+    return `${ru[1]}.${ru[2]}.${yy}`;
   }
 
-  const d = new Date(text);
-  if (!isNaN(d)) {
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const yy = String(d.getFullYear()).slice(2);
+  const fullIso = text.match(/^(\d{4})-(\d{2})-(\d{2})[T\s]/);
+  if (fullIso) {
+    return `${fullIso[3]}.${fullIso[2]}.${fullIso[1].slice(2)}`;
+  }
+
+  const date = new Date(text);
+  if (!Number.isNaN(date.getTime())) {
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const yy = String(date.getFullYear()).slice(2);
     return `${dd}.${mm}.${yy}`;
   }
 
@@ -93,34 +111,8 @@ function extractShelfLife(params) {
   return parseDateToRu(raw);
 }
 
-function firstText(value) {
-  if (Array.isArray(value)) return cleanText(value[0]);
-  return cleanText(value);
-}
-
-function mapOffer(offer, referencePriceMap = new Map(), categoryName = '') {
-  const vendorCode = firstText(offer.vendorCode);
-  const fallbackPrice = Number(firstText(offer.price)) || 0;
-  const referencePrice = vendorCode && referencePriceMap.has(vendorCode)
-    ? referencePriceMap.get(vendorCode)
-    : fallbackPrice;
-
-  const categoryId = firstText(offer.categoryId);
-  const picture = firstText(offer.picture);
-  const name = firstText(offer.name) || firstText(offer.model) || `Товар ${firstText(offer.$?.id)}`;
-  const shelfLife = extractShelfLife(offer.param);
-
-  return {
-    id: firstText(offer.$?.id) || vendorCode || `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    vendorCode,
-    name,
-    referencePrice,
-    categoryId,
-    categoryName,
-    image: picture,
-    available: String(offer.$?.available || 'true') !== 'false',
-    shelfLife
-  };
+function simpleHash(input) {
+  return crypto.createHash('md5').update(input).digest('hex');
 }
 
 async function fetchText(url) {
@@ -129,11 +121,14 @@ async function fetchText(url) {
       'user-agent': 'Mozilla/5.0 Mobile Order Bot'
     }
   });
+
   if (!response.ok) {
-    throw new Error(`Не удалось загрузить YML: ${response.status} ${response.statusText}`);
+    throw new Error(`Не удалось загрузить XML: ${response.status} ${response.statusText}`);
   }
+
   return response.text();
 }
+
 async function loadReferencePrices() {
   const xml = await fetchText(PRICE_YML_URL);
   const parsed = await parseStringPromise(xml, {
@@ -143,30 +138,64 @@ async function loadReferencePrices() {
   });
 
   const shop = parsed?.yml_catalog?.shop;
-  if (!shop) return new Map();
+  if (!shop) {
+    throw new Error('Во втором фиде не найден блок yml_catalog.shop');
+  }
 
   const offersRaw = normalizeArray(shop.offers?.offer);
-  const priceMap = await loadReferencePrices();
+  const priceMap = new Map();
 
-const categories = normalizeArray(shop.categories?.category).map((c) => ({
-  id: String(c?.$?.id || ''),
-  name: typeof c === 'string' ? cleanText(c) : cleanText(c?._)
-}));
-
-const category = categories.find((c) => c.id === CATEGORY_ID);
-const offersRaw = normalizeArray(shop.offers?.offer);
-
-const products = offersRaw
-  .map((offer) => mapOffer(offer, priceMap, category?.name || `Категория ${CATEGORY_ID}`))
-  .filter((item) => String(item.categoryId) === CATEGORY_ID);
+  for (const offer of offersRaw) {
+    const vendorCode = firstText(offer.vendorCode);
+    const price = Number(firstText(offer.price)) || 0;
+    if (vendorCode) {
+      priceMap.set(vendorCode, price);
     }
   }
 
   return priceMap;
 }
+
+function mapOffer(offer, referencePriceMap = new Map(), categoryName = '') {
+  const vendorCode = firstText(offer.vendorCode);
+  const fallbackPrice = Number(firstText(offer.price)) || 0;
+  const referencePrice =
+    vendorCode && referencePriceMap.has(vendorCode)
+      ? referencePriceMap.get(vendorCode)
+      : fallbackPrice;
+
+  const categoryId = firstText(offer.categoryId);
+  const picture = firstText(offer.picture);
+  const name =
+    firstText(offer.name) ||
+    firstText(offer.model) ||
+    `Товар ${firstText(offer?.$?.id) || ''}`;
+
+  const shelfLife = extractShelfLife(offer.param);
+
+  return {
+    id:
+      firstText(offer?.$?.id) ||
+      vendorCode ||
+      `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    vendorCode,
+    name,
+    referencePrice,
+    categoryId,
+    categoryName,
+    image: picture,
+    available: String(offer?.$?.available || 'true') !== 'false',
+    shelfLife
+  };
+}
+
 async function refreshCatalog() {
   try {
-    const xml = await fetchText(YML_URL);
+    const [xml, priceMap] = await Promise.all([
+      fetchText(YML_URL),
+      loadReferencePrices()
+    ]);
+
     const parsed = await parseStringPromise(xml, {
       explicitArray: false,
       mergeAttrs: false,
@@ -174,7 +203,7 @@ async function refreshCatalog() {
     });
 
     const shop = parsed?.yml_catalog?.shop;
-    if (!shop) throw new Error('В YML не найден блок yml_catalog.shop');
+    if (!shop) throw new Error('В основном фиде не найден блок yml_catalog.shop');
 
     const categories = normalizeArray(shop.categories?.category).map((c) => ({
       id: String(c?.$?.id || ''),
@@ -183,8 +212,9 @@ async function refreshCatalog() {
 
     const category = categories.find((c) => c.id === CATEGORY_ID);
     const offersRaw = normalizeArray(shop.offers?.offer);
+
     const products = offersRaw
-      .map(mapOffer)
+      .map((offer) => mapOffer(offer, priceMap, category?.name || `Категория ${CATEGORY_ID}`))
       .filter((item) => String(item.categoryId) === CATEGORY_ID);
 
     catalogState = {
@@ -203,10 +233,12 @@ async function refreshCatalog() {
       ...catalogState,
       error: error.message || 'Неизвестная ошибка загрузки каталога'
     };
+
     try {
       const cached = JSON.parse(await fs.readFile(CATALOG_CACHE_FILE, 'utf8'));
       catalogState = { ...cached, error: catalogState.error };
     } catch {}
+
     return catalogState;
   }
 }
@@ -235,15 +267,6 @@ async function writeOrders(orders) {
   await fs.writeFile(ORDERS_FILE, JSON.stringify(orders, null, 2), 'utf8');
 }
 
-function simpleHash(input) {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) {
-    h = (h << 5) - h + input.charCodeAt(i);
-    h |= 0;
-  }
-  return Math.abs(h).toString(36);
-}
-
 async function readImageCache(key) {
   const file = path.join(IMAGE_CACHE_DIR, `${key}.webp`);
   try {
@@ -260,6 +283,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     ymlUrl: YML_URL,
+    priceYmlUrl: PRICE_YML_URL,
     categoryId: CATEGORY_ID,
     loadedAt: catalogState.loadedAt,
     products: catalogState.products.length,
@@ -271,6 +295,7 @@ app.get('/api/products', async (req, res) => {
   if (!catalogState.products.length && !catalogState.error) {
     await refreshCatalog();
   }
+
   res.json({ ok: true, ...catalogState });
 });
 
@@ -281,20 +306,21 @@ app.post('/api/refresh', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   const { items = [], customer = '', comment = '' } = req.body || {};
+
   if (!Array.isArray(items) || !items.length) {
     return res.status(400).json({ ok: false, error: 'Пустой заказ' });
   }
 
   const normalizedItems = items
-  .filter((item) => Number(item.quantity) > 0)
-  .map((item) => ({
-    id: String(item.id || ''),
-    name: cleanText(item.name),
-    quantity: Number(item.quantity) || 0,
-    price: 0,
-    sum: 0
-  }))
-  .filter((item) => item.quantity > 0);
+    .filter((item) => Number(item.quantity) > 0)
+    .map((item) => ({
+      id: String(item.id || ''),
+      name: cleanText(item.name),
+      quantity: Number(item.quantity) || 0,
+      price: 0,
+      sum: 0
+    }))
+    .filter((item) => item.quantity > 0);
 
   if (!normalizedItems.length) {
     return res.status(400).json({ ok: false, error: 'Нет товаров с количеством больше нуля' });
@@ -308,7 +334,7 @@ app.post('/api/orders', async (req, res) => {
     comment: cleanText(comment),
     items: normalizedItems,
     totalQuantity: normalizedItems.reduce((sum, i) => sum + i.quantity, 0),
-    totalSum: 0, 0)
+    totalSum: 0
   };
 
   orders.unshift(order);
@@ -326,8 +352,9 @@ app.get('/img', async (req, res) => {
   const imageUrl = String(req.query.url || '');
   if (!imageUrl) return res.status(400).send('No url');
 
-  const key = simpleHash(imageUrl + `:${IMAGE_WIDTH}:${IMAGE_QUALITY}`);
+  const key = simpleHash(`${imageUrl}:${IMAGE_WIDTH}:${IMAGE_QUALITY}`);
   const cached = await readImageCache(key);
+
   if (cached) {
     res.setHeader('Content-Type', 'image/webp');
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -338,13 +365,19 @@ app.get('/img', async (req, res) => {
     const response = await fetch(imageUrl, {
       headers: { 'user-agent': 'Mozilla/5.0 Mobile Order Bot' }
     });
+
     if (!response.ok) throw new Error('Image fetch failed');
 
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
     const optimized = await sharp(buffer)
-      .resize({ width: IMAGE_WIDTH, height: IMAGE_WIDTH, fit: 'inside', withoutEnlargement: true })
+      .resize({
+        width: IMAGE_WIDTH,
+        height: IMAGE_WIDTH,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
       .webp({ quality: IMAGE_QUALITY })
       .toBuffer();
 
@@ -363,16 +396,19 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-app.get('*', (req, res) => {
+app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 await ensureStorage();
 await loadCatalogFromCache();
-if (!catalogState.products.length) {
-  refreshCatalog().catch(() => {});
-}
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server started on :${PORT}`);
 });
+
+if (!catalogState.products.length) {
+  refreshCatalog().catch((err) => {
+    console.error('Catalog refresh failed:', err);
+  });
+}
