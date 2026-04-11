@@ -1,6 +1,6 @@
-const STATIC_CACHE = 'mobile-order-static-v5';
-const API_CACHE = 'mobile-order-api-v5';
-const IMAGE_CACHE = 'mobile-order-images-v5';
+const STATIC_CACHE = 'mobile-order-static-v6';
+const API_CACHE = 'mobile-order-api-v6';
+const IMAGE_CACHE = 'mobile-order-images-v6';
 const OFFLINE_PAGE = '/offline.html';
 
 const STATIC_ASSETS = [
