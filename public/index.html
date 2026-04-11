@@ -19,18 +19,22 @@
 
         <div class="topbar__controls">
           <button class="menu-pill" id="category-menu-btn" type="button" aria-label="Категории">
-            <span class="menu-pill__icon">🏬</span>
-          </button>
-
-          <button class="basket-pill" id="basket-open-btn" type="button">
-            <span class="basket-pill__label">Корзина</span>
-            <span class="basket-pill__value" id="basket-sum">0 ₽</span>
+            <span class="menu-pill__icon" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
           </button>
 
           <button class="refresh-btn" id="refresh-btn" type="button">
-            Обновить товары
+            Обновить
           </button>
         </div>
+      </div>
+
+      <div class="topbar__right">
+        <button class="basket-pill" id="basket-open-btn" type="button">
+          <span class="basket-pill__label">Корзина</span>
+          <span class="basket-pill__value" id="basket-sum">0,00 ₽</span>
+        </button>
       </div>
     </div>
 
@@ -93,7 +97,7 @@
       <div class="modal__footer">
         <div class="modal__sum">
           <div class="modal__sum-label">Итого</div>
-          <div class="modal__sum-value" id="basket-total-sum">0 ₽</div>
+          <div class="modal__sum-value" id="basket-total-sum">0,00 ₽</div>
         </div>
 
         <button class="primary-btn" id="send-order-btn" type="button" disabled>Отправить заказ</button>
