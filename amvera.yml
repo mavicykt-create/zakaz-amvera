@@ -1,2 +1,18 @@
-name: online-shop
-tariffId: "5"
+meta:
+  environment: nodejs
+  toolchain:
+    name: npm
+    version: "20"
+build:
+  skip: false
+  additionalCommands: null
+  artifacts:
+    "*": /
+run:
+  persistenceMount: /data
+  scriptName: null
+  scriptArguments: null
+  nodeArguments: null
+  command: npm run start
+  containerPort: 80
+  servicePort: 80
