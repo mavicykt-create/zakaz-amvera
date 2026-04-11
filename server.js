@@ -286,16 +286,15 @@ app.post('/api/orders', async (req, res) => {
   }
 
   const normalizedItems = items
-    .filter((item) => Number(item.quantity) > 0)
-    .map((item) => ({
-      id: String(item.id || ''),
-      article: cleanText(item.article),
-      name: cleanText(item.name),
-      quantity: Number(item.quantity) || 0,
-      price: Number(item.price) || 0,
-      sum: (Number(item.quantity) || 0) * (Number(item.price) || 0)
-    }))
-    .filter((item) => item.quantity > 0);
+  .filter((item) => Number(item.quantity) > 0)
+  .map((item) => ({
+    id: String(item.id || ''),
+    name: cleanText(item.name),
+    quantity: Number(item.quantity) || 0,
+    price: 0,
+    sum: 0
+  }))
+  .filter((item) => item.quantity > 0);
 
   if (!normalizedItems.length) {
     return res.status(400).json({ ok: false, error: 'Нет товаров с количеством больше нуля' });
@@ -309,7 +308,7 @@ app.post('/api/orders', async (req, res) => {
     comment: cleanText(comment),
     items: normalizedItems,
     totalQuantity: normalizedItems.reduce((sum, i) => sum + i.quantity, 0),
-    totalSum: normalizedItems.reduce((sum, i) => sum + i.sum, 0)
+    totalSum: 0, 0)
   };
 
   orders.unshift(order);
