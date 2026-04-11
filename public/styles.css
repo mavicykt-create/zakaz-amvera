@@ -6,7 +6,6 @@
   --line: rgba(60, 60, 67, 0.12);
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
   --radius: 22px;
-  --radius-sm: 16px;
   --green: #22c55e;
   --red: #ef4444;
 }
@@ -31,7 +30,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -63,32 +63,28 @@ textarea {
   letter-spacing: -0.02em;
 }
 
-.topbar__meta-row {
+.topbar__controls {
   display: flex;
   gap: 10px;
   align-items: center;
 }
 
-.topbar__meta {
+.category-menu-wrap {
   background: rgba(255, 255, 255, 0.82);
   box-shadow: var(--shadow);
-  border: 1px solid rgba(255, 255, 255, 0.45);
   border-radius: 18px;
-  padding: 12px 14px;
-  min-width: 102px;
+  padding: 0;
 }
 
-.topbar__meta-label {
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 2px;
-}
-
-.topbar__meta-value {
-  font-size: 24px;
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.category-menu {
+  border: 0;
+  background: transparent;
+  padding: 14px 16px;
+  border-radius: 18px;
+  color: var(--text);
+  min-width: 210px;
+  outline: none;
+  cursor: pointer;
 }
 
 .basket-pill {
@@ -164,6 +160,18 @@ textarea {
   max-width: 920px;
   margin: 0 auto;
   padding: 10px 12px 24px;
+}
+
+.category-block {
+  margin-bottom: 18px;
+}
+
+.category-title {
+  font-size: 22px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 10px;
 }
 
 .grid {
@@ -258,6 +266,11 @@ textarea {
 
 .product-card__shelf {
   font-size: 11px;
+  color: var(--muted);
+}
+
+.empty-state {
+  padding: 20px 0;
   color: var(--muted);
 }
 
@@ -481,10 +494,6 @@ textarea {
 }
 
 @media (max-width: 720px) {
-  .topbar__inner {
-    align-items: center;
-  }
-
   .topbar__title {
     font-size: 24px;
   }
@@ -521,18 +530,23 @@ textarea {
     padding: 8px;
   }
 
-  .topbar__meta-row {
+  .topbar__inner {
+    align-items: center;
+  }
+
+  .topbar__controls {
     gap: 8px;
   }
 
-  .topbar__meta,
+  .category-menu {
+    min-width: 150px;
+    padding: 12px 12px;
+  }
+
   .basket-pill {
     padding: 10px 12px;
     border-radius: 16px;
-  }
-
-  .topbar__meta-value {
-    font-size: 22px;
+    min-width: 118px;
   }
 
   .basket-pill__value {
@@ -550,6 +564,11 @@ textarea {
     gap: 6px;
   }
 
+  .category-title {
+    font-size: 20px;
+    margin-bottom: 8px;
+  }
+
   .modal__sheet {
     max-height: 92vh;
   }
@@ -559,13 +578,5 @@ textarea {
   .modal__footer {
     padding-left: 12px;
     padding-right: 12px;
-  }
-
-  .modal__footer {
-    align-items: flex-end;
-  }
-
-  .primary-btn {
-    padding: 14px 16px;
   }
 }
