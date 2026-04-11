@@ -1,18 +1,20 @@
 const state = {
+  categories: [],
   products: [],
   cart: {},
   loading: false,
   sending: false,
-  isFresh: false
+  isFresh: false,
+  selectedCategory: 'all'
 };
 
 const els = {
   status: document.getElementById('status'),
-  grid: document.getElementById('product-grid'),
-  totalItems: document.getElementById('total-items'),
+  catalogRoot: document.getElementById('catalog-root'),
   basketSum: document.getElementById('basket-sum'),
   refreshBtn: document.getElementById('refresh-btn'),
   freshDot: document.getElementById('fresh-dot'),
+  categorySelect: document.getElementById('category-select'),
 
   basketModal: document.getElementById('basket-modal'),
   basketBackdrop: document.getElementById('basket-backdrop'),
@@ -76,55 +78,115 @@ function updateFreshness(isFresh) {
 }
 
 function updateTopbar() {
-  els.totalItems.textContent = String(getTotalItems());
   els.basketSum.textContent = formatPrice(getTotalSum());
 }
 
-function updateCardQty(productId) {
-  const card = els.grid.querySelector(`.product-card[data-id="${productId}"]`);
-  if (!card) return;
-  const qtyEl = card.querySelector('.product-card__qty');
-  if (!qtyEl) return;
-
-  const qty = state.cart[productId] || 0;
-  qtyEl.textContent = qty > 0 ? String(qty) : '';
-  qtyEl.classList.toggle('is-visible', qty > 0);
+function showSuccess(text) {
+  els.success.textContent = text;
+  els.success.classList.add('is-visible');
+  window.setTimeout(() => {
+    els.success.classList.remove('is-visible');
+  }, 2400);
 }
 
-function clearAllCardBadges() {
-  els.grid.querySelectorAll('.product-card__qty').forEach((qtyEl) => {
-    qtyEl.textContent = '';
-    qtyEl.classList.remove('is-visible');
-  });
+function sortRuByName(items) {
+  return [...items].sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''), 'ru', {
+      sensitivity: 'base',
+      numeric: true
+    })
+  );
 }
 
-function renderProducts() {
-  if (!state.products.length) {
-    els.grid.innerHTML = '';
+function fillCategoryMenu() {
+  const options = [
+    '<option value="all">Все категории</option>',
+    ...state.categories.map((category) =>
+      `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`
+    )
+  ];
+
+  els.categorySelect.innerHTML = options.join('');
+  els.categorySelect.value = state.selectedCategory;
+}
+
+function getGroupedProducts() {
+  const byCategory = new Map();
+
+  for (const category of state.categories) {
+    byCategory.set(category.id, []);
+  }
+
+  for (const product of state.products) {
+    if (!byCategory.has(product.categoryId)) {
+      byCategory.set(product.categoryId, []);
+    }
+    byCategory.get(product.categoryId).push(product);
+  }
+
+  if (state.selectedCategory !== 'all') {
+    const category = state.categories.find((c) => c.id === state.selectedCategory);
+    return category
+      ? [{ id: category.id, name: category.name, products: sortRuByName(byCategory.get(category.id) || []) }]
+      : [];
+  }
+
+  return state.categories
+    .map((category) => ({
+      id: category.id,
+      name: category.name,
+      products: sortRuByName(byCategory.get(category.id) || [])
+    }))
+    .filter((group) => group.products.length > 0);
+}
+
+function renderCatalog() {
+  const groups = getGroupedProducts();
+
+  if (!groups.length) {
+    els.catalogRoot.innerHTML = '<div class="empty-state">Нет товаров</div>';
     return;
   }
 
-  els.grid.innerHTML = state.products.map((product) => {
-    const qty = state.cart[product.id] || 0;
-    return `
-      <button class="product-card" data-id="${escapeHtml(product.id)}" type="button">
-        <div class="product-card__image-wrap">
-          ${
-            product.image
-              ? `<img class="product-card__image" src="${buildImageUrl(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy">`
-              : `<div class="product-card__image product-card__image--placeholder">Нет фото</div>`
-          }
-          <div class="product-card__qty ${qty > 0 ? 'is-visible' : ''}">${qty > 0 ? qty : ''}</div>
-        </div>
+  els.catalogRoot.innerHTML = groups.map((group) => `
+    <section class="category-block" id="category-${escapeHtml(group.id)}">
+      <h2 class="category-title">${escapeHtml(group.name)}</h2>
+      <div class="grid">
+        ${group.products.map((product) => {
+          const qty = state.cart[product.id] || 0;
+          return `
+            <button class="product-card" data-id="${escapeHtml(product.id)}" type="button">
+              <div class="product-card__image-wrap">
+                ${
+                  product.image
+                    ? `<img class="product-card__image" src="${buildImageUrl(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy">`
+                    : `<div class="product-card__image product-card__image--placeholder">Нет фото</div>`
+                }
+                <div class="product-card__qty ${qty > 0 ? 'is-visible' : ''}">${qty > 0 ? qty : ''}</div>
+              </div>
 
-        <div class="product-card__body">
-          <div class="product-card__name">${escapeHtml(product.name)}</div>
-          <div class="product-card__price">${product.displayPrice ? escapeHtml(formatPrice(product.displayPrice)) : ''}</div>
-          <div class="product-card__shelf">${escapeHtml(product.shelfLife || '')}</div>
-        </div>
-      </button>
-    `;
-  }).join('');
+              <div class="product-card__body">
+                <div class="product-card__name">${escapeHtml(product.name)}</div>
+                <div class="product-card__price">${product.displayPrice ? escapeHtml(formatPrice(product.displayPrice)) : ''}</div>
+                <div class="product-card__shelf">${escapeHtml(product.shelfLife || '')}</div>
+              </div>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `).join('');
+}
+
+function updateAllBadges() {
+  document.querySelectorAll('.product-card').forEach((card) => {
+    const id = card.dataset.id;
+    const qty = state.cart[id] || 0;
+    const qtyEl = card.querySelector('.product-card__qty');
+    if (!qtyEl) return;
+    qtyEl.textContent = qty > 0 ? String(qty) : '';
+    qtyEl.classList.toggle('is-visible', qty > 0);
+  });
 }
 
 function renderBasket() {
@@ -181,17 +243,9 @@ function closeBasket() {
   els.basketModal.setAttribute('aria-hidden', 'true');
 }
 
-function showSuccess(text) {
-  els.success.textContent = text;
-  els.success.classList.add('is-visible');
-  window.setTimeout(() => {
-    els.success.classList.remove('is-visible');
-  }, 2400);
-}
-
 function addToCart(productId) {
   state.cart[productId] = (state.cart[productId] || 0) + 1;
-  updateCardQty(productId);
+  updateAllBadges();
   updateTopbar();
 }
 
@@ -205,14 +259,14 @@ function changeCartQty(productId, delta) {
     state.cart[productId] = next;
   }
 
-  updateCardQty(productId);
+  updateAllBadges();
   updateTopbar();
   renderBasket();
 }
 
 function clearCart() {
   state.cart = {};
-  clearAllCardBadges();
+  updateAllBadges();
   updateTopbar();
   renderBasket();
 }
@@ -231,21 +285,22 @@ async function loadProducts() {
     }
 
     state.products = Array.isArray(data.products) ? data.products : [];
+    state.categories = Array.isArray(data.categories) ? data.categories : [];
 
     const isFresh = data.loadedAt
       ? (Date.now() - new Date(data.loadedAt).getTime() < 6 * 60 * 60 * 1000)
       : false;
 
     updateFreshness(isFresh);
+    fillCategoryMenu();
+    renderCatalog();
+    updateTopbar();
 
     setStatus(
       data.error
         ? `Каталог загружен из кеша. ${data.error}`
-        : `Товаров: ${state.products.length}`
+        : `Категорий: ${state.categories.length}, товаров: ${state.products.length}`
     );
-
-    renderProducts();
-    updateTopbar();
   } catch (error) {
     updateFreshness(false);
     setStatus(error.message || 'Ошибка загрузки каталога', true);
@@ -272,11 +327,14 @@ async function refreshProducts() {
     }
 
     state.products = Array.isArray(data.products) ? data.products : [];
-    updateFreshness(true);
-    setStatus(`Каталог обновлён. Товаров: ${state.products.length}`);
+    state.categories = Array.isArray(data.categories) ? data.categories : [];
 
-    renderProducts();
+    updateFreshness(true);
+    fillCategoryMenu();
+    renderCatalog();
     updateTopbar();
+
+    setStatus(`Категорий: ${state.categories.length}, товаров: ${state.products.length}`);
   } catch (error) {
     updateFreshness(false);
     setStatus(error.message || 'Ошибка обновления каталога', true);
@@ -342,12 +400,17 @@ async function sendOrder() {
   }
 }
 
-els.grid.addEventListener('click', (event) => {
+els.catalogRoot.addEventListener('click', (event) => {
   const card = event.target.closest('.product-card');
   if (!card) return;
   const id = card.dataset.id;
   if (!id) return;
   addToCart(id);
+});
+
+els.categorySelect.addEventListener('change', (event) => {
+  state.selectedCategory = event.target.value;
+  renderCatalog();
 });
 
 els.refreshBtn.addEventListener('click', refreshProducts);
