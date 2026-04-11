@@ -4,9 +4,7 @@ const state = {
   cart: {},
   loading: false,
   sending: false,
-  isFresh: false,
-  selectedCategory: 'all',
-  deferredPrompt: null
+  selectedCategory: 'all'
 };
 
 const STORAGE_KEYS = {
@@ -20,8 +18,12 @@ const els = {
   catalogRoot: document.getElementById('catalog-root'),
   basketSum: document.getElementById('basket-sum'),
   refreshBtn: document.getElementById('refresh-btn'),
-  freshDot: document.getElementById('fresh-dot'),
-  categorySelect: document.getElementById('category-select'),
+
+  categoryMenuBtn: document.getElementById('category-menu-btn'),
+  categoryModal: document.getElementById('category-modal'),
+  categoryBackdrop: document.getElementById('category-backdrop'),
+  categoryCloseBtn: document.getElementById('category-close-btn'),
+  categoryMenuList: document.getElementById('category-menu-list'),
 
   basketModal: document.getElementById('basket-modal'),
   basketBackdrop: document.getElementById('basket-backdrop'),
@@ -31,6 +33,7 @@ const els = {
   basketEmpty: document.getElementById('basket-empty'),
   basketSubtitle: document.getElementById('basket-subtitle'),
   basketTotalSum: document.getElementById('basket-total-sum'),
+  clearCartBtn: document.getElementById('clear-cart-btn'),
 
   phoneInput: document.getElementById('phone-input'),
   commentInput: document.getElementById('comment-input'),
@@ -48,8 +51,19 @@ function escapeHtml(value) {
 }
 
 function formatPrice(value) {
-  const num = Number(value) || 0;
-  return `${new Intl.NumberFormat('ru-RU').format(num)} ₽`;
+  const num = Math.round(Number(value) || 0);
+  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(num)} ₽`;
+}
+
+function formatLoadedAt(value) {
+  if (!value) return 'Дата обновления неизвестна';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Дата обновления неизвестна';
+
+  return `Актуально на ${date.toLocaleDateString('ru-RU')} ${date.toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit'
+  })}`;
 }
 
 function setStatus(text, isError = false) {
@@ -76,16 +90,6 @@ function getTotalSum() {
     if (!product) return sum;
     return sum + (Number(product.cartPrice) || 0) * qty;
   }, 0);
-}
-
-function updateFreshness(isFresh) {
-  state.isFresh = !!isFresh;
-  els.freshDot.classList.toggle('is-fresh', state.isFresh);
-  els.freshDot.classList.toggle('is-stale', !state.isFresh);
-}
-
-function updateTopbar() {
-  els.basketSum.textContent = formatPrice(getTotalSum());
 }
 
 function saveCart() {
@@ -173,16 +177,21 @@ function sortRuByName(items) {
   );
 }
 
-function fillCategoryMenu() {
-  const options = [
-    '<option value="all">Все категории</option>',
-    ...state.categories.map((category) =>
-      `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`
-    )
+function renderCategoryMenu() {
+  const items = [
+    `<button class="menu-item ${state.selectedCategory === 'all' ? 'is-active' : ''}" data-category="all" type="button">Все товары</button>`,
+    ...state.categories.map((category) => `
+      <button
+        class="menu-item ${state.selectedCategory === category.id ? 'is-active' : ''}"
+        data-category="${escapeHtml(category.id)}"
+        type="button"
+      >
+        ${escapeHtml(category.name)}
+      </button>
+    `)
   ];
 
-  els.categorySelect.innerHTML = options.join('');
-  els.categorySelect.value = state.selectedCategory;
+  els.categoryMenuList.innerHTML = items.join('');
 }
 
 function getGroupedProducts() {
@@ -202,7 +211,11 @@ function getGroupedProducts() {
   if (state.selectedCategory !== 'all') {
     const category = state.categories.find((c) => c.id === state.selectedCategory);
     return category
-      ? [{ id: category.id, name: category.name, products: sortRuByName(byCategory.get(category.id) || []) }]
+      ? [{
+          id: category.id,
+          name: category.name,
+          products: sortRuByName(byCategory.get(category.id) || [])
+        }]
       : [];
   }
 
@@ -264,6 +277,10 @@ function updateAllBadges() {
   });
 }
 
+function updateTopbar() {
+  els.basketSum.textContent = formatPrice(getTotalSum());
+}
+
 function renderBasket() {
   const items = Object.entries(state.cart)
     .map(([id, quantity]) => {
@@ -276,6 +293,7 @@ function renderBasket() {
   els.basketSubtitle.textContent = `${getTotalItems()} товаров`;
   els.basketTotalSum.textContent = formatPrice(getTotalSum());
   els.sendBtn.disabled = items.length === 0 || state.sending;
+  els.clearCartBtn.disabled = items.length === 0 || state.sending;
 
   if (!items.length) {
     els.basketList.innerHTML = '';
@@ -286,8 +304,17 @@ function renderBasket() {
   els.basketEmpty.style.display = 'none';
   els.basketList.innerHTML = items.map(({ product, quantity }) => {
     const sum = (Number(product.cartPrice) || 0) * quantity;
+
     return `
       <div class="basket-item" data-id="${escapeHtml(product.id)}">
+        <div class="basket-item__thumb-wrap">
+          ${
+            product.image
+              ? `<img class="basket-item__thumb" src="${buildImageUrl(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy">`
+              : `<div class="basket-item__thumb basket-item__thumb--empty"></div>`
+          }
+        </div>
+
         <div class="basket-item__info">
           <div class="basket-item__name">${escapeHtml(product.name)}</div>
           <div class="basket-item__meta">
@@ -311,11 +338,26 @@ function openBasket() {
   renderBasket();
   els.basketModal.classList.add('is-open');
   els.basketModal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('body-lock');
 }
 
 function closeBasket() {
   els.basketModal.classList.remove('is-open');
   els.basketModal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('body-lock');
+}
+
+function openCategoryMenu() {
+  renderCategoryMenu();
+  els.categoryModal.classList.add('is-open');
+  els.categoryModal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('body-lock');
+}
+
+function closeCategoryMenu() {
+  els.categoryModal.classList.remove('is-open');
+  els.categoryModal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('body-lock');
 }
 
 function addToCart(productId) {
@@ -371,33 +413,21 @@ async function loadProducts() {
       loadedAt: data.loadedAt || null
     });
 
-    const isFresh = data.loadedAt
-      ? (Date.now() - new Date(data.loadedAt).getTime() < 6 * 60 * 60 * 1000)
-      : false;
-
-    updateFreshness(isFresh);
-    fillCategoryMenu();
     renderCatalog();
+    renderCategoryMenu();
     updateTopbar();
-
-    setStatus(
-      data.error
-        ? `Каталог загружен из кеша. ${data.error}`
-        : `Категорий: ${state.categories.length}, товаров: ${state.products.length}`
-    );
+    setStatus(formatLoadedAt(data.loadedAt));
   } catch (error) {
     const cached = loadCatalogFromStorage();
 
     if (cached?.products?.length) {
       state.products = cached.products;
       state.categories = cached.categories || [];
-      fillCategoryMenu();
       renderCatalog();
+      renderCategoryMenu();
       updateTopbar();
-      updateFreshness(false);
-      setStatus('Работаем из сохраненного каталога');
+      setStatus(`Работаем из сохраненного каталога. ${formatLoadedAt(cached.loadedAt)}`);
     } else {
-      updateFreshness(false);
       setStatus(error.message || 'Ошибка загрузки каталога', true);
     }
   } finally {
@@ -407,7 +437,7 @@ async function loadProducts() {
 }
 
 async function refreshProducts() {
-  setStatus('Обновляем каталог...');
+  setStatus('Обновляем товары...');
   els.refreshBtn.disabled = true;
 
   try {
@@ -431,13 +461,11 @@ async function refreshProducts() {
       loadedAt: data.loadedAt || new Date().toISOString()
     });
 
-    updateFreshness(true);
-    fillCategoryMenu();
     renderCatalog();
+    renderCategoryMenu();
     updateTopbar();
-    setStatus(`Категорий: ${state.categories.length}, товаров: ${state.products.length}`);
+    setStatus(formatLoadedAt(data.loadedAt || new Date().toISOString()));
   } catch (error) {
-    updateFreshness(false);
     setStatus(error.message || 'Ошибка обновления каталога', true);
   } finally {
     els.refreshBtn.disabled = false;
@@ -514,13 +542,6 @@ async function registerSW() {
   } catch {}
 }
 
-function setupInstallPrompt() {
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    state.deferredPrompt = e;
-  });
-}
-
 els.catalogRoot.addEventListener('click', (event) => {
   const card = event.target.closest('.product-card');
   if (!card) return;
@@ -529,16 +550,27 @@ els.catalogRoot.addEventListener('click', (event) => {
   addToCart(id);
 });
 
-els.categorySelect.addEventListener('change', (event) => {
-  state.selectedCategory = event.target.value;
+els.refreshBtn.addEventListener('click', refreshProducts);
+
+els.categoryMenuBtn.addEventListener('click', openCategoryMenu);
+els.categoryCloseBtn.addEventListener('click', closeCategoryMenu);
+els.categoryBackdrop.addEventListener('click', closeCategoryMenu);
+
+els.categoryMenuList.addEventListener('click', (event) => {
+  const btn = event.target.closest('.menu-item');
+  if (!btn) return;
+
+  state.selectedCategory = btn.dataset.category || 'all';
   renderCatalog();
+  renderCategoryMenu();
+  closeCategoryMenu();
 });
 
-els.refreshBtn.addEventListener('click', refreshProducts);
 els.basketOpenBtn.addEventListener('click', openBasket);
 els.basketCloseBtn.addEventListener('click', closeBasket);
 els.basketBackdrop.addEventListener('click', closeBasket);
 els.sendBtn.addEventListener('click', sendOrder);
+els.clearCartBtn.addEventListener('click', clearCart);
 
 els.basketList.addEventListener('click', (event) => {
   const btn = event.target.closest('.qty-btn');
@@ -553,7 +585,10 @@ els.basketList.addEventListener('click', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeBasket();
+  if (event.key === 'Escape') {
+    closeBasket();
+    closeCategoryMenu();
+  }
 });
 
 window.addEventListener('online', () => {
@@ -568,6 +603,5 @@ window.addEventListener('offline', () => {
 loadCart();
 updateTopbar();
 registerSW();
-setupInstallPrompt();
 loadProducts();
 flushPendingOrders();
