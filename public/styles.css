@@ -8,6 +8,7 @@
   --radius: 22px;
   --green: #16a34a;
   --red: #dc2626;
+  --yellow: #facc15;
 }
 
 * {
@@ -60,8 +61,20 @@ select {
   gap: 12px;
 }
 
+.topbar__left,
+.topbar__right {
+  display: flex;
+  align-items: center;
+}
+
+.topbar__left {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .topbar__title {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 26px;
   line-height: 1.05;
   font-weight: 700;
@@ -91,18 +104,37 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
 }
 
 .menu-pill__icon {
-  font-size: 22px;
-  line-height: 1;
+  width: 20px;
+  height: 16px;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.menu-pill__icon span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  border-radius: 999px;
+  background: #111;
+}
+
+.refresh-btn {
+  cursor: pointer;
+  padding: 14px 16px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .basket-pill {
   cursor: pointer;
   padding: 12px 14px;
   text-align: left;
-  min-width: 138px;
+  min-width: 148px;
 }
 
 .basket-pill__label {
@@ -118,13 +150,6 @@ select {
   line-height: 1;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--text);
-}
-
-.refresh-btn {
-  cursor: pointer;
-  padding: 14px 16px;
-  font-weight: 600;
   color: var(--text);
 }
 
@@ -213,17 +238,18 @@ select {
   position: absolute;
   top: 8px;
   right: 8px;
-  min-width: 26px;
-  height: 26px;
-  padding: 0 8px;
+  min-width: 31px;
+  height: 31px;
+  padding: 0 9px;
   border-radius: 999px;
-  background: rgba(17, 17, 17, 0.9);
-  color: #fff;
+  background: var(--yellow);
+  color: #111;
   display: none;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 6px 16px rgba(250, 204, 21, 0.35);
 }
 
 .product-card__qty.is-visible {
@@ -594,6 +620,19 @@ select {
     padding: 8px;
   }
 
+  .topbar__inner {
+    align-items: flex-start;
+  }
+
+  .topbar__left {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .topbar__right {
+    flex: 0 0 auto;
+  }
+
   .topbar__controls {
     gap: 8px;
   }
@@ -607,7 +646,7 @@ select {
   .basket-pill {
     padding: 10px 12px;
     border-radius: 16px;
-    min-width: 118px;
+    min-width: 124px;
   }
 
   .basket-pill__value {
@@ -642,6 +681,11 @@ select {
 
   .basket-item {
     grid-template-columns: 48px 1fr;
+  }
+
+  .basket-item__thumb-wrap {
+    width: 48px;
+    height: 48px;
   }
 
   .basket-item__controls {
