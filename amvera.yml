@@ -1,14 +1,10 @@
 meta:
   environment: node
   toolchain:
-    name: npm
-    version: "20"
-
-build:
-  artifacts:
-    "*": /
+    name: node
+    version: 20
 
 run:
   command: npm start
-  containerPort: "3000"
+  containerPort: 3000
   servicePort: "80"
