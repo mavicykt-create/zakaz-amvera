@@ -30,7 +30,7 @@ const IMAGE_CACHE_DIR = path.join(DATA_DIR, 'cache');
 
 let catalogState = {
   loadedAt: null,
-  categoryName: 'Весь ассортимент',
+  categories: [],
   products: [],
   totalOffers: 0,
   error: null
@@ -131,9 +131,7 @@ async function loadDisplayPrices() {
   });
 
   const shop = parsed?.yml_catalog?.shop;
-  if (!shop) {
-    throw new Error('Во втором фиде не найден блок yml_catalog.shop');
-  }
+  if (!shop) throw new Error('Во втором фиде не найден блок yml_catalog.shop');
 
   const offersRaw = normalizeArray(shop.offers?.offer);
   const map = new Map();
@@ -141,9 +139,7 @@ async function loadDisplayPrices() {
   for (const offer of offersRaw) {
     const vendorCode = firstText(offer.vendorCode);
     const displayPrice = Number(firstText(offer.price)) || 0;
-    if (vendorCode) {
-      map.set(vendorCode, displayPrice);
-    }
+    if (vendorCode) map.set(vendorCode, displayPrice);
   }
 
   return map;
@@ -180,6 +176,15 @@ function mapOffer(offer, displayPriceMap = new Map(), categoryName = '') {
   };
 }
 
+function sortRuByName(items) {
+  return [...items].sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''), 'ru', {
+      sensitivity: 'base',
+      numeric: true
+    })
+  );
+}
+
 async function refreshCatalog() {
   try {
     const [xml, displayPriceMap] = await Promise.all([
@@ -196,26 +201,34 @@ async function refreshCatalog() {
     const shop = parsed?.yml_catalog?.shop;
     if (!shop) throw new Error('В основном фиде не найден блок yml_catalog.shop');
 
-    const categories = normalizeArray(shop.categories?.category).map((c) => ({
+    const categoriesRaw = normalizeArray(shop.categories?.category).map((c) => ({
       id: String(c?.$?.id || ''),
       name: typeof c === 'string' ? cleanText(c) : cleanText(c?._)
     }));
 
+    const categories = categoriesRaw
+      .filter((c) => c.id && c.name)
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, 'ru', { sensitivity: 'base', numeric: true })
+      );
+
     const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
     const offersRaw = normalizeArray(shop.offers?.offer);
 
-    const products = offersRaw.map((offer) => {
-      const categoryId = firstText(offer.categoryId);
-      return mapOffer(
-        offer,
-        displayPriceMap,
-        categoryMap.get(categoryId) || `Категория ${categoryId || ''}`
-      );
-    });
+    const products = sortRuByName(
+      offersRaw.map((offer) => {
+        const categoryId = firstText(offer.categoryId);
+        return mapOffer(
+          offer,
+          displayPriceMap,
+          categoryMap.get(categoryId) || `Категория ${categoryId || ''}`
+        );
+      })
+    );
 
     catalogState = {
       loadedAt: new Date().toISOString(),
-      categoryName: 'Весь ассортимент',
+      categories,
       products,
       totalOffers: offersRaw.length,
       error: null
@@ -284,6 +297,7 @@ app.get('/api/health', (req, res) => {
     displayPriceUrl: DISPLAY_PRICE_URL,
     loadedAt: catalogState.loadedAt,
     products: catalogState.products.length,
+    categories: catalogState.categories.length,
     error: catalogState.error,
     isFresh
   });
