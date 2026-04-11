@@ -62,27 +62,35 @@ function getParamValue(params, name) {
   return cleanText(found);
 }
 
-function extractShelfLife(params) {
-  const raw = getParamValue(params, 'Срок годности');
-  if (!raw) return { raw: '', date: '' };
+function parseDateToRu(raw) {
+  const text = cleanText(raw);
+  if (!text) return '';
 
-  const d = new Date(raw);
-  if (!isNaN(d)) {
-    return {
-      raw,
-      date: d.toLocaleDateString('ru-RU')
-    };
+  const direct = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (direct) {
+    return `${direct[3]}.${direct[2]}.${direct[1].slice(2)}`;
   }
 
-  return { raw, date: raw };
+  const ru = text.match(/^(\d{2})\.(\d{2})\.(\d{2,4})$/);
+  if (ru) {
+    const year = ru[3].length === 4 ? ru[3].slice(2) : ru[3];
+    return `${ru[1]}.${ru[2]}.${year}`;
+  }
+
+  const d = new Date(text);
+  if (!isNaN(d)) {
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(2);
+    return `${dd}.${mm}.${yy}`;
+  }
+
+  return text;
 }
 
-function shelfLifeBadge(days, raw) {
-  if (!raw) return { text: '—', tone: 'none' };
-  if (days == null) return { text: raw, tone: 'none' };
-  if (days < 30) return { text: `${days} дн`, tone: 'danger' };
-  if (days <= 90) return { text: `${days} дн`, tone: 'warn' };
-  return { text: `${days} дн`, tone: 'ok' };
+function extractShelfLife(params) {
+  const raw = getParamValue(params, 'Срок годности');
+  return parseDateToRu(raw);
 }
 
 function firstText(value) {
@@ -90,29 +98,28 @@ function firstText(value) {
   return cleanText(value);
 }
 
-function mapOffer(offer) {
-  const price = Number(firstText(offer.price)) || 0;
-  const oldPrice = Number(firstText(offer.oldprice)) || null;
+function mapOffer(offer, referencePriceMap = new Map(), categoryName = '') {
+  const vendorCode = firstText(offer.vendorCode);
+  const fallbackPrice = Number(firstText(offer.price)) || 0;
+  const referencePrice = vendorCode && referencePriceMap.has(vendorCode)
+    ? referencePriceMap.get(vendorCode)
+    : fallbackPrice;
+
   const categoryId = firstText(offer.categoryId);
   const picture = firstText(offer.picture);
-  const vendorCode = firstText(offer.vendorCode);
   const name = firstText(offer.name) || firstText(offer.model) || `Товар ${firstText(offer.$?.id)}`;
-  const article = vendorCode || firstText(offer.$?.id) || '';
-  const shelf = extractShelfLife(offer.param);
-  const badge = shelfLifeBadge(shelf.days, shelf.raw);
+  const shelfLife = extractShelfLife(offer.param);
 
   return {
-    id: firstText(offer.$?.id) || article || crypto.randomUUID(),
-    article,
+    id: firstText(offer.$?.id) || vendorCode || `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    vendorCode,
     name,
-    price,
-    oldPrice,
+    referencePrice,
     categoryId,
+    categoryName,
     image: picture,
     available: String(offer.$?.available || 'true') !== 'false',
-    shelfLifeRaw: shelf.raw,
-    shelfLifeDays: shelf.days,
-    shelfLifeBadge: badge
+    shelfLife
   };
 }
 
@@ -127,7 +134,36 @@ async function fetchText(url) {
   }
   return response.text();
 }
+async function loadReferencePrices() {
+  const xml = await fetchText(PRICE_YML_URL);
+  const parsed = await parseStringPromise(xml, {
+    explicitArray: false,
+    mergeAttrs: false,
+    trim: true
+  });
 
+  const shop = parsed?.yml_catalog?.shop;
+  if (!shop) return new Map();
+
+  const offersRaw = normalizeArray(shop.offers?.offer);
+  const priceMap = await loadReferencePrices();
+
+const categories = normalizeArray(shop.categories?.category).map((c) => ({
+  id: String(c?.$?.id || ''),
+  name: typeof c === 'string' ? cleanText(c) : cleanText(c?._)
+}));
+
+const category = categories.find((c) => c.id === CATEGORY_ID);
+const offersRaw = normalizeArray(shop.offers?.offer);
+
+const products = offersRaw
+  .map((offer) => mapOffer(offer, priceMap, category?.name || `Категория ${CATEGORY_ID}`))
+  .filter((item) => String(item.categoryId) === CATEGORY_ID);
+    }
+  }
+
+  return priceMap;
+}
 async function refreshCatalog() {
   try {
     const xml = await fetchText(YML_URL);
