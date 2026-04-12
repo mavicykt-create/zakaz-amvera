@@ -497,9 +497,9 @@ async function handleExchangeRequest(req, res) {
     const targetDir = path.dirname(target);
     await fs.mkdir(targetDir, { recursive: true });
 
-    const body = Buffer.isBuffer(req.body)
-      ? req.body
-      : Buffer.from(typeof req.body === 'string' ? req.body : '');
+   const body = Buffer.isBuffer(req.body)
+  ? req.body
+  : Buffer.from(req.body || '');
 
     await fs.writeFile(target, body);
     return res.type('text/plain; charset=utf-8').send('success');
