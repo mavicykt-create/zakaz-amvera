@@ -196,7 +196,9 @@ async function collectFilesRecursive(dir) {
 }
 
 function findFirstByName(files, name) {
-  return files.find((f) => path.basename(f).toLowerCase() === name.toLowerCase()) || null;
+  return files.find((f) =>
+    f.toLowerCase().includes(name.toLowerCase())
+  ) || null;
 }
 
 function parseClassifierGroups(groups, parentId = null, acc = []) {
