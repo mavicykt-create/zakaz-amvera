@@ -639,11 +639,6 @@ async function ensureExchangeDir() {
   await fs.mkdir(EXCHANGE_UPLOAD_DIR, { recursive: true });
 }
 
-async function resetExchangeDir() {
-  await fs.rm(EXCHANGE_UPLOAD_DIR, { recursive: true, force: true });
-  await fs.mkdir(EXCHANGE_UPLOAD_DIR, { recursive: true });
-}
-
 async function writeExchangeFile(filename, body) {
   const target = path.join(EXCHANGE_UPLOAD_DIR, filename);
   const targetDir = path.dirname(target);
@@ -712,10 +707,10 @@ async function handleExchangeRequest(req, res) {
   }
 
   if (mode === 'init') {
-      return res
-    .type('text/plain; charset=utf-8')
-    .send(`zip=no\nfile_limit=${MAX_EXCHANGE_FILE_SIZE}`);
-}
+    return res
+      .type('text/plain; charset=utf-8')
+      .send(`zip=no\nfile_limit=${MAX_EXCHANGE_FILE_SIZE}`);
+  }
 
   if (mode === 'file') {
     await ensureExchangeDir();
@@ -754,7 +749,7 @@ async function handleExchangeRequest(req, res) {
 
       if (importFilename.includes('offers')) {
         const result = await tryImportFromExchangeDir();
-        console.log('[1C] files before import:', files);
+        console.log('[1C] import result:', result);
 
         if (!result.ok) {
           return res
