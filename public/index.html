@@ -12,34 +12,28 @@
 <body>
   <div class="success" id="success-message"></div>
 
-  <header class="topbar">
-    <div class="topbar__inner">
-      <div class="topbar__left">
-        <h1 class="topbar__title">Мобильный заказ</h1>
+<header class="topbar">
+  <div class="topbar__inner">
+    <div class="topbar__controls">
+      <button class="menu-pill" id="category-menu-btn" type="button" aria-label="Категории">
+        <span class="menu-pill__icon" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </span>
+      </button>
 
-        <div class="topbar__controls">
-          <button class="menu-pill" id="category-menu-btn" type="button" aria-label="Категории">
-            <span class="menu-pill__icon" aria-hidden="true">
-              <span></span><span></span><span></span>
-            </span>
-          </button>
-
-          <button class="refresh-btn" id="refresh-btn" type="button">
-            Обновить
-          </button>
-        </div>
-      </div>
-
-      <div class="topbar__right">
-        <button class="basket-pill" id="basket-open-btn" type="button">
-          <span class="basket-pill__label">Корзина</span>
-          <span class="basket-pill__value" id="basket-sum">0,00 ₽</span>
-        </button>
-      </div>
+      <button class="refresh-btn" id="refresh-btn" type="button">
+        Обновить
+      </button>
     </div>
 
-    <div class="status" id="status">Загружаем каталог...</div>
-  </header>
+    <button class="basket-pill" id="basket-open-btn" type="button">
+      <span class="basket-pill__label">Корзина</span>
+      <span class="basket-pill__value" id="basket-sum">0,00 ₽</span>
+    </button>
+  </div>
+
+  <div class="status" id="status">Загружаем каталог...</div>
+</header>
 
   <main class="page">
     <div id="catalog-root"></div>
