@@ -18,6 +18,11 @@ const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '12345');
 const IMAGE_WIDTH = Number(process.env.IMAGE_WIDTH || 220);
 const IMAGE_QUALITY = Number(process.env.IMAGE_QUALITY || 42);
 const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS || 6 * 60 * 60 * 1000);
+const EXCHANGE_LOGIN = String(process.env.EXCHANGE_LOGIN || 'admin');
+const EXCHANGE_PASSWORD = String(process.env.EXCHANGE_PASSWORD || ADMIN_PASSWORD);
+const EXCHANGE_SESSION_NAME = 'sessid';
+const EXCHANGE_SESSION_ID = 'zakazamvera';
+const MAX_EXCHANGE_FILE_SIZE = Number(process.env.MAX_EXCHANGE_FILE_SIZE || 1024 * 1024 * 500);
 
 const DATA_DIR = path.join(__dirname, 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
@@ -26,6 +31,7 @@ const IMAGE_CACHE_DIR = path.join(DATA_DIR, 'cache');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const TMP_DIR = path.join(UPLOADS_DIR, 'tmp');
 const SOURCE_IMAGES_DIR = path.join(UPLOADS_DIR, 'images');
+const EXCHANGE_UPLOAD_DIR = path.join(TMP_DIR, 'exchange');
 
 let catalogState = {
   loadedAt: null,
@@ -39,6 +45,13 @@ let catalogState = {
 let refreshInProgress = false;
 
 app.use(cors());
+app.all(['/1c_exchange.php', '/commerceml/1c_exchange.php', '/bitrix/admin/1c_exchange.php'], requireExchangeAuth, express.raw({ type: '*/*', limit: MAX_EXCHANGE_FILE_SIZE }), async (req, res) => {
+  try {
+    await handleExchangeRequest(req, res);
+  } catch (error) {
+    res.status(500).type('text/plain; charset=utf-8').send(`failure\n${error.message || 'Ошибка обмена'}`);
+  }
+});
 app.use(express.json({ limit: '5mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
@@ -53,6 +66,7 @@ async function ensureStorage() {
   await fs.mkdir(IMAGE_CACHE_DIR, { recursive: true });
   await fs.mkdir(TMP_DIR, { recursive: true });
   await fs.mkdir(SOURCE_IMAGES_DIR, { recursive: true });
+  await fs.mkdir(EXCHANGE_UPLOAD_DIR, { recursive: true });
 
   try { await fs.access(ORDERS_FILE); } catch { await fs.writeFile(ORDERS_FILE, '[]', 'utf8'); }
   try { await fs.access(CATALOG_FILE); } catch {
@@ -392,6 +406,114 @@ async function buildCatalogFromCommerceML(extractedDir) {
 async function saveCatalog(catalog) {
   catalogState = catalog;
   await fs.writeFile(CATALOG_FILE, JSON.stringify(catalog, null, 2), 'utf8');
+}
+
+
+function decodeBasicAuth(header = '') {
+  if (!header || !header.startsWith('Basic ')) return null;
+  try {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+    const idx = decoded.indexOf(':');
+    if (idx === -1) return null;
+    return {
+      login: decoded.slice(0, idx),
+      password: decoded.slice(idx + 1)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function requireExchangeAuth(req, res, next) {
+  const creds = decodeBasicAuth(String(req.headers.authorization || ''));
+  if (!creds || creds.login !== EXCHANGE_LOGIN || creds.password !== EXCHANGE_PASSWORD) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="1C Exchange"');
+    return res.status(401).send('failure\nUnauthorized');
+  }
+  next();
+}
+
+function sanitizeExchangeFilename(filename) {
+  const normalized = String(filename || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\.\.(\/|\\)/g, '')
+    .trim();
+  return normalized;
+}
+
+async function ensureExchangeDir() {
+  await fs.mkdir(EXCHANGE_UPLOAD_DIR, { recursive: true });
+}
+
+async function resetExchangeDir() {
+  await fs.rm(EXCHANGE_UPLOAD_DIR, { recursive: true, force: true });
+  await fs.mkdir(EXCHANGE_UPLOAD_DIR, { recursive: true });
+}
+
+async function tryImportFromExchangeDir() {
+  const files = await collectFilesRecursive(EXCHANGE_UPLOAD_DIR).catch(() => []);
+  const importXml = findFirstByName(files, 'import.xml');
+  const offersXml = findFirstByName(files, 'offers.xml');
+  if (!importXml || !offersXml) {
+    return { ok: false, waitingFor: !importXml ? 'import.xml' : 'offers.xml' };
+  }
+
+  const catalog = await buildCatalogFromCommerceML(EXCHANGE_UPLOAD_DIR);
+  await saveCatalog(catalog);
+  return {
+    ok: true,
+    loadedAt: catalog.loadedAt,
+    products: catalog.products.length,
+    categories: catalog.categories.length
+  };
+}
+
+async function handleExchangeRequest(req, res) {
+  const mode = String(req.query.mode || '').toLowerCase();
+  const type = String(req.query.type || '').toLowerCase();
+
+  if (type && type !== 'catalog') {
+    return res.type('text/plain; charset=utf-8').send('failure\nПоддерживается только type=catalog');
+  }
+
+  if (mode === 'checkauth') {
+    return res.type('text/plain; charset=utf-8').send(`success\n${EXCHANGE_SESSION_NAME}\n${EXCHANGE_SESSION_ID}`);
+  }
+
+  if (mode === 'init') {
+    await resetExchangeDir();
+    return res.type('text/plain; charset=utf-8').send(`zip=no\nfile_limit=${MAX_EXCHANGE_FILE_SIZE}`);
+  }
+
+  if (mode === 'file') {
+    await ensureExchangeDir();
+    const filename = sanitizeExchangeFilename(req.query.filename || req.query.file || '');
+    if (!filename) {
+      return res.status(400).type('text/plain; charset=utf-8').send('failure\nНе передано имя файла');
+    }
+
+    const target = path.join(EXCHANGE_UPLOAD_DIR, filename);
+    const targetDir = path.dirname(target);
+    await fs.mkdir(targetDir, { recursive: true });
+
+    const body = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(typeof req.body === 'string' ? req.body : '');
+
+    await fs.writeFile(target, body);
+    return res.type('text/plain; charset=utf-8').send('success');
+  }
+
+  if (mode === 'import') {
+    const result = await tryImportFromExchangeDir();
+    if (result.ok) {
+      return res.type('text/plain; charset=utf-8').send('success');
+    }
+    return res.type('text/plain; charset=utf-8').send('success');
+  }
+
+  return res.status(400).type('text/plain; charset=utf-8').send('failure\nНеизвестный mode');
 }
 
 app.get('/api/health', (req, res) => {
