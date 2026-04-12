@@ -230,8 +230,12 @@ async function parseImportXml(xmlPath) {
   const catalog = parsed?.КоммерческаяИнформация?.Каталог;
   if (!catalog) throw new Error('В import.xml не найден узел КоммерческаяИнформация/Каталог');
 
-  const classifier = catalog.Классификатор || {};
-  const groupList = parseClassifierGroups(classifier.Группы?.Группа || []);
+  const groupsSource =
+  catalog.Классификатор?.Группы?.Группа ||
+  catalog.Группы?.Группа ||
+  [];
+
+const groupList = parseClassifierGroups(groupsSource);
   const categoryMap = new Map(groupList.map((g) => [g.id, g.name]));
 
   const propertyDefs = normalizeArray(classifier.Свойства?.Свойство).map((p) => ({
