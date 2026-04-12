@@ -1,7 +1,7 @@
 {
   "name": "zakaz-amvera",
   "version": "1.0.0",
-  "description": "CommerceML backend for mobile order site",
+  "description": "CommerceML backend",
   "main": "server.js",
   "type": "module",
   "scripts": {
