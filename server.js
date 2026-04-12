@@ -484,7 +484,6 @@ async function handleExchangeRequest(req, res) {
   }
 
   if (mode === 'init') {
-    await resetExchangeDir();
     return res.type('text/plain; charset=utf-8').send(`zip=no\nfile_limit=${MAX_EXCHANGE_FILE_SIZE}`);
   }
 
