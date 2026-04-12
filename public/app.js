@@ -91,6 +91,12 @@ function formatLoadedAt(value) {
   return base;
 }
 
+function formatShelfLife(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return `Срок годности: ${text}`;
+}
+
 function setStatus(text, isError = false) {
   els.status.textContent = text || '';
   els.status.classList.toggle('status--error', !!isError);
@@ -113,6 +119,26 @@ function getProductById(id) {
   return state.products.find((p) => p.id === id);
 }
 
+function getProductCategoryId(product) {
+  return product?.groupId || product?.categoryId || '';
+}
+
+function getProductCategoryName(product) {
+  return product?.groupName || product?.categoryName || '';
+}
+
+function getDisplayPriceText(product) {
+  if (product?.displayPriceText) return String(product.displayPriceText);
+  if (Number(product?.displayPrice) > 0) return formatPrice(product.displayPrice);
+  return '';
+}
+
+function getCartPriceText(product) {
+  if (product?.cartPriceText) return String(product.cartPriceText);
+  if (Number(product?.cartPrice) > 0) return formatPrice(product.cartPrice);
+  return '';
+}
+
 function getTotalItems() {
   return Object.values(state.cart).reduce((sum, qty) => sum + qty, 0);
 }
@@ -129,7 +155,7 @@ function getCategoryOrderCount(categoryId) {
   return Object.entries(state.cart).reduce((sum, [id, qty]) => {
     const product = getProductById(id);
     if (!product) return sum;
-    return product.categoryId === categoryId ? sum + qty : sum;
+    return getProductCategoryId(product) === categoryId ? sum + qty : sum;
   }, 0);
 }
 
@@ -261,7 +287,7 @@ function getVisibleCategoryGroup() {
   if (!category) return null;
 
   const products = sortRuByName(
-    state.products.filter((product) => product.categoryId === category.id)
+    state.products.filter((product) => getProductCategoryId(product) === category.id)
   );
 
   return {
@@ -285,6 +311,9 @@ function renderCatalog() {
       <div class="grid">
         ${group.products.map((product) => {
           const qty = state.cart[product.id] || 0;
+          const displayPriceText = getDisplayPriceText(product);
+          const shelfLifeText = formatShelfLife(product.shelfLife);
+
           return `
             <button class="product-card" data-id="${escapeHtml(product.id)}" type="button">
               <div class="product-card__image-wrap">
@@ -298,8 +327,8 @@ function renderCatalog() {
 
               <div class="product-card__body">
                 <div class="product-card__name">${escapeHtml(product.name)}</div>
-                <div class="product-card__price">${product.displayPrice ? escapeHtml(formatPrice(product.displayPrice)) : ''}</div>
-                <div class="product-card__shelf">${escapeHtml(product.shelfLife || '')}</div>
+                <div class="product-card__price">${escapeHtml(displayPriceText)}</div>
+                <div class="product-card__shelf">${escapeHtml(shelfLifeText)}</div>
               </div>
             </button>
           `;
@@ -375,6 +404,7 @@ function renderBasket() {
   els.basketEmpty.style.display = 'none';
   els.basketList.innerHTML = items.map(({ product, quantity }) => {
     const sum = (Number(product.cartPrice) || 0) * quantity;
+    const cartPriceText = getCartPriceText(product);
 
     return `
       <div class="basket-item" data-id="${escapeHtml(product.id)}">
@@ -389,7 +419,7 @@ function renderBasket() {
         <div class="basket-item__info">
           <div class="basket-item__name">${escapeHtml(product.name)}</div>
           <div class="basket-item__meta">
-            <span>${escapeHtml(formatPrice(product.cartPrice || 0))}</span>
+            <span>${escapeHtml(cartPriceText)}</span>
             <span>·</span>
             <span>${escapeHtml(formatPrice(sum))}</span>
           </div>
@@ -482,7 +512,9 @@ async function loadProducts() {
     }
 
     state.products = Array.isArray(data.products) ? data.products : [];
-    state.categories = Array.isArray(data.categories) ? data.categories : [];
+    state.categories = Array.isArray(data.groups) && data.groups.length
+      ? data.groups
+      : (Array.isArray(data.categories) ? data.categories : []);
     state.loadedAt = data.loadedAt || null;
 
     ensureSelectedCategory();
@@ -516,40 +548,7 @@ async function loadProducts() {
 }
 
 async function refreshProducts() {
-  setStatus('Обновляем товары...');
-  els.refreshBtn.disabled = true;
-
-  try {
-    const res = await fetch('/api/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    const data = await res.json();
-
-    if (!res.ok || !data.ok) {
-      throw new Error(data.error || 'Не удалось обновить каталог');
-    }
-
-    state.products = Array.isArray(data.products) ? data.products : [];
-    state.categories = Array.isArray(data.categories) ? data.categories : [];
-    state.loadedAt = data.loadedAt || new Date().toISOString();
-
-    ensureSelectedCategory();
-
-    saveCatalog({
-      products: state.products,
-      categories: state.categories,
-      loadedAt: state.loadedAt
-    });
-
-    rerenderVisibleParts();
-    refreshStatusFromLoadedAt();
-  } catch (error) {
-    setStatus(error.message || 'Ошибка обновления каталога', true);
-  } finally {
-    els.refreshBtn.disabled = false;
-  }
+  await loadProducts();
 }
 
 async function sendOrder() {
@@ -564,7 +563,12 @@ async function sendOrder() {
         name: product.name,
         quantity,
         cartPrice: product.cartPrice,
-        displayPrice: product.displayPrice
+        cartPriceText: product.cartPriceText,
+        displayPrice: product.displayPrice,
+        displayPriceText: product.displayPriceText,
+        groupId: getProductCategoryId(product),
+        groupName: getProductCategoryName(product),
+        shelfLife: product.shelfLife || ''
       };
     }).filter(Boolean),
     phone: els.phoneInput.value.trim(),
