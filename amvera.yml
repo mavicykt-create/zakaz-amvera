@@ -3,16 +3,33 @@ meta:
   toolchain:
     name: npm
     version: "20"
+
 build:
   skip: false
   additionalCommands: null
   artifacts:
     "*": /
+
 run:
-  scriptName: server.js
-  scriptArguments: null
-  nodeArguments: null
-  command: npm start
+  command: node server.js
   persistenceMount: /data
   containerPort: 3000
   servicePort: 80
+
+env:
+  - name: PORT
+    value: "3000"
+  - name: DATA_DIR
+    value: "/data"
+  - name: ADMIN_PASSWORD
+    value: "123456789"
+  - name: EXCHANGE_LOGIN
+    value: "admin"
+  - name: EXCHANGE_PASSWORD
+    value: "12345"
+  - name: MAX_EXCHANGE_FILE_SIZE
+    value: "209715200"
+  - name: IMAGE_WIDTH
+    value: "220"
+  - name: IMAGE_QUALITY
+    value: "42"
