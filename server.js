@@ -45,14 +45,25 @@ let catalogState = {
 let refreshInProgress = false;
 
 app.use(cors());
-app.all(['/1c_exchange.php', '/commerceml/1c_exchange.php', '/bitrix/admin/1c_exchange.php'], requireExchangeAuth, express.raw({ type: '*/*', limit: '200mb' }), async (req, res) => {
-  try {
-    await handleExchangeRequest(req, res);
-  } catch (error) {
-    res.status(500).type('text/plain; charset=utf-8').send(`failure\n${error.message || 'Ошибка обмена'}`);
+
+app.all(
+  ['/1c_exchange.php', '/commerceml/1c_exchange.php', '/bitrix/admin/1c_exchange.php'],
+  requireExchangeAuth,
+  express.raw({ type: '*/*', limit: '200mb' }),
+  async (req, res) => {
+    try {
+      await handleExchangeRequest(req, res);
+    } catch (error) {
+      console.error('1C exchange error:', error);
+      res
+        .status(500)
+        .type('text/plain; charset=utf-8')
+        .send(`failure\n${error.message || 'Ошибка обмена'}`);
+    }
   }
-});
-app.use(express.json({ limit: '5mb' }));
+);
+
+app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -68,16 +79,31 @@ async function ensureStorage() {
   await fs.mkdir(SOURCE_IMAGES_DIR, { recursive: true });
   await fs.mkdir(EXCHANGE_UPLOAD_DIR, { recursive: true });
 
-  try { await fs.access(ORDERS_FILE); } catch { await fs.writeFile(ORDERS_FILE, '[]', 'utf8'); }
-  try { await fs.access(CATALOG_FILE); } catch {
-    await fs.writeFile(CATALOG_FILE, JSON.stringify({
-      loadedAt: null,
-      categories: [],
-      products: [],
-      totalOffers: 0,
-      error: null,
-      source: 'commerceml'
-    }, null, 2), 'utf8');
+  try {
+    await fs.access(ORDERS_FILE);
+  } catch {
+    await fs.writeFile(ORDERS_FILE, '[]', 'utf8');
+  }
+
+  try {
+    await fs.access(CATALOG_FILE);
+  } catch {
+    await fs.writeFile(
+      CATALOG_FILE,
+      JSON.stringify(
+        {
+          loadedAt: null,
+          categories: [],
+          products: [],
+          totalOffers: 0,
+          error: null,
+          source: 'commerceml'
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
   }
 }
 
@@ -180,6 +206,7 @@ async function extractZip(zipPath, targetDir) {
 
 async function collectFilesRecursive(dir) {
   const out = [];
+
   async function walk(current) {
     const items = await fs.readdir(current, { withFileTypes: true });
     for (const item of items) {
@@ -191,14 +218,13 @@ async function collectFilesRecursive(dir) {
       }
     }
   }
+
   await walk(dir);
   return out;
 }
 
 function findFirstByName(files, name) {
-  return files.find((f) =>
-    f.toLowerCase().includes(name.toLowerCase())
-  ) || null;
+  return files.find((f) => f.toLowerCase().includes(name.toLowerCase())) || null;
 }
 
 function parseClassifierGroups(groups, parentId = null, acc = []) {
@@ -230,49 +256,56 @@ async function parseImportXml(xmlPath) {
   const catalog = parsed?.КоммерческаяИнформация?.Каталог;
   if (!catalog) throw new Error('В import.xml не найден узел КоммерческаяИнформация/Каталог');
 
-  const groupsSource =
-  catalog.Классификатор?.Группы?.Группа ||
-  catalog.Группы?.Группа ||
-  [];
+  const classifier = catalog.Классификатор || {};
 
-const groupList = parseClassifierGroups(groupsSource);
+  const groupsSource =
+    catalog.Классификатор?.Группы?.Группа ||
+    catalog.Группы?.Группа ||
+    [];
+
+  const groupList = parseClassifierGroups(groupsSource);
   const categoryMap = new Map(groupList.map((g) => [g.id, g.name]));
 
-  const propertyDefs = normalizeArray(classifier.Свойства?.Свойство).map((p) => ({
-    id: firstText(p.Ид),
-    name: firstText(p.Наименование)
-  })).filter((p) => p.id && p.name);
+  const propertyDefs = normalizeArray(classifier.Свойства?.Свойство)
+    .map((p) => ({
+      id: firstText(p.Ид),
+      name: firstText(p.Наименование)
+    }))
+    .filter((p) => p.id && p.name);
+
   const propertyNameMap = new Map(propertyDefs.map((p) => [p.id, p.name]));
 
-  const products = normalizeArray(catalog.Товары?.Товар).map((item) => {
-    const id = firstText(item.Ид);
-    const article = firstText(item.Артикул) || firstText(item.Код) || firstText(item.АртикулТовара);
-    const name = firstText(item.Наименование);
-    const groupId = firstText(item.Группы?.Ид || item.Группы?.Группа?.Ид);
-    const imageRaw = firstText(item.Картинка);
-    const propValues = getProductPropMap(item);
+  const products = normalizeArray(catalog.Товары?.Товар)
+    .map((item) => {
+      const id = firstText(item.Ид);
+      const article = firstText(item.Артикул) || firstText(item.Код) || firstText(item.АртикулТовара);
+      const name = firstText(item.Наименование);
+      const groupId = firstText(item.Группы?.Ид || item.Группы?.Группа?.Ид);
+      const imageRaw = firstText(item.Картинка);
+      const propValues = getProductPropMap(item);
 
-    let shelfLife = '';
-    for (const [propId, value] of Object.entries(propValues)) {
-      const propName = propertyNameMap.get(propId);
-      if (propName && cleanText(propName).toLowerCase() === 'срок годности') {
-        shelfLife = parseDateToRu(value);
+      let shelfLife = '';
+      for (const [propId, value] of Object.entries(propValues)) {
+        const propName = propertyNameMap.get(propId);
+        if (propName && cleanText(propName).toLowerCase() === 'срок годности') {
+          shelfLife = parseDateToRu(value);
+        }
       }
-    }
 
-    return {
-      id,
-      vendorCode: article,
-      name,
-      categoryId: groupId,
-      categoryName: categoryMap.get(groupId) || '',
-      imageRaw,
-      shelfLife,
-      stock: 0,
-      cartPrice: 0,
-      displayPrice: 0
-    };
-  }).filter((p) => p.id && p.name);
+      return {
+        id,
+        vendorCode: article,
+        name,
+        categoryId: groupId,
+        categoryName: categoryMap.get(groupId) || '',
+        imageRaw,
+        shelfLife,
+        stock: 0,
+        cartPrice: 0,
+        displayPrice: 0
+      };
+    })
+    .filter((p) => p.id && p.name);
 
   return { categories: groupList.map((g) => ({ id: g.id, name: g.name })), products };
 }
@@ -294,25 +327,32 @@ async function parseOffersXml(xmlPath) {
   const xml = await fs.readFile(xmlPath, 'utf8');
   const parsed = await parseStringPromise(xml, { explicitArray: false, trim: true });
 
-  const packageNode = parsed?.КоммерческаяИнформация?.ПакетПредложений || parsed?.КоммерческаяИнформация?.Каталог;
+  const packageNode =
+    parsed?.КоммерческаяИнформация?.ПакетПредложений ||
+    parsed?.КоммерческаяИнформация?.Каталог;
+
   if (!packageNode) throw new Error('В offers.xml не найден узел ПакетПредложений');
 
-  const priceTypes = normalizeArray(packageNode.ТипыЦен?.ТипЦены).map((p) => ({
-    id: firstText(p.Ид),
-    name: firstText(p.Наименование)
-  })).filter((p) => p.id);
+  const priceTypes = normalizeArray(packageNode.ТипыЦен?.ТипЦены)
+    .map((p) => ({
+      id: firstText(p.Ид),
+      name: firstText(p.Наименование)
+    }))
+    .filter((p) => p.id);
 
   const priceTypeNameMap = new Map(priceTypes.map((p) => [p.id, p.name]));
 
-  const offers = normalizeArray(packageNode.Предложения?.Предложение).map((offer) => {
-    const id = firstText(offer.Ид);
-    const quantity = Number(firstText(offer.Количество)) || 0;
-    const prices = extractPricesFromOffer(offer).map((p) => ({
-      ...p,
-      resolvedName: p.typeName || priceTypeNameMap.get(p.typeId) || ''
-    }));
-    return { id, quantity, prices };
-  }).filter((o) => o.id);
+  const offers = normalizeArray(packageNode.Предложения?.Предложение)
+    .map((offer) => {
+      const id = firstText(offer.Ид);
+      const quantity = Number(firstText(offer.Количество)) || 0;
+      const prices = extractPricesFromOffer(offer).map((p) => ({
+        ...p,
+        resolvedName: p.typeName || priceTypeNameMap.get(p.typeId) || ''
+      }));
+      return { id, quantity, prices };
+    })
+    .filter((o) => o.id);
 
   return { offers };
 }
@@ -385,7 +425,12 @@ async function buildCatalogFromCommerceML(extractedDir) {
       const base = path.basename(product.imageRaw);
       product.image = imageMap.get(base) || '';
     } else if (product.vendorCode) {
-      const tryNames = [`${product.vendorCode}.jpg`, `${product.vendorCode}.jpeg`, `${product.vendorCode}.png`, `${product.vendorCode}.webp`];
+      const tryNames = [
+        `${product.vendorCode}.jpg`,
+        `${product.vendorCode}.jpeg`,
+        `${product.vendorCode}.png`,
+        `${product.vendorCode}.webp`
+      ];
       const found = tryNames.find((name) => imageMap.has(name));
       product.image = found ? imageMap.get(found) : '';
     } else {
@@ -413,7 +458,6 @@ async function saveCatalog(catalog) {
   catalogState = catalog;
   await fs.writeFile(CATALOG_FILE, JSON.stringify(catalog, null, 2), 'utf8');
 }
-
 
 function decodeBasicAuth(header = '') {
   if (!header || !header.startsWith('Basic ')) return null;
@@ -461,6 +505,7 @@ async function tryImportFromExchangeDir() {
   const files = await collectFilesRecursive(EXCHANGE_UPLOAD_DIR).catch(() => []);
   const importXml = findFirstByName(files, 'import.xml');
   const offersXml = findFirstByName(files, 'offers.xml');
+
   if (!importXml || !offersXml) {
     return { ok: false, waitingFor: !importXml ? 'import.xml' : 'offers.xml' };
   }
@@ -502,25 +547,28 @@ async function handleExchangeRequest(req, res) {
     const targetDir = path.dirname(target);
     await fs.mkdir(targetDir, { recursive: true });
 
-   const body = Buffer.isBuffer(req.body)
-  ? req.body
-  : Buffer.from(req.body || '');
+    const body = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(req.body || '');
 
     await fs.writeFile(target, body);
     return res.type('text/plain; charset=utf-8').send('success');
   }
 
   if (mode === 'import') {
-  console.log('IMPORT START');
+    console.log('IMPORT START');
 
-  const result = await tryImportFromExchangeDir();
-
-  console.log('IMPORT RESULT:', result);
-
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-
-  return res.send('success\n');
-}
+    try {
+      const result = await tryImportFromExchangeDir();
+      console.log('IMPORT RESULT:', result);
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send('success\n');
+    } catch (e) {
+      console.error('IMPORT ERROR:', e);
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(`failure\n${e.message || 'error'}`);
+    }
+  }
 
   return res.status(400).type('text/plain; charset=utf-8').send('failure\nНеизвестный mode');
 }
