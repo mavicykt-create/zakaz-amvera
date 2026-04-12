@@ -25,6 +25,10 @@ const EXCHANGE_LOGIN = String(process.env.EXCHANGE_LOGIN || 'admin');
 const EXCHANGE_PASSWORD = String(process.env.EXCHANGE_PASSWORD || ADMIN_PASSWORD);
 const EXCHANGE_SESSION_NAME = 'sessid';
 const EXCHANGE_SESSION_ID = 'zakazamvera';
+
+const DISPLAY_PRICE_TYPE_ID = '78de8a88-c52f-11ef-88c6-26d1a1d6853b'; // цена для карточки
+const CART_PRICE_TYPE_ID = 'c66e06be-c4eb-11ef-88c6-26d1a1d6853b'; // цена для корзины и заказа
+
 const MAX_EXCHANGE_FILE_SIZE = Number(
   process.env.MAX_EXCHANGE_FILE_SIZE || 200 * 1024 * 1024
 );
@@ -44,6 +48,7 @@ const EXCHANGE_UPLOAD_DIR = path.join(TMP_DIR, 'exchange');
 let catalogState = {
   loadedAt: null,
   categories: [],
+  groups: [],
   products: [],
   totalOffers: 0,
   error: null,
@@ -102,6 +107,7 @@ async function ensureStorage() {
         {
           loadedAt: null,
           categories: [],
+          groups: [],
           products: [],
           totalOffers: 0,
           error: null,
@@ -129,6 +135,12 @@ function firstText(value) {
   if (Array.isArray(value)) return cleanText(value[0]);
   if (typeof value === 'object' && value && '_' in value) return cleanText(value._);
   return cleanText(value);
+}
+
+function parseNumber(value, fallback = 0) {
+  const text = cleanText(value).replace(',', '.');
+  const num = Number(text);
+  return Number.isFinite(num) ? num : fallback;
 }
 
 function parseDateToRu(raw) {
@@ -188,6 +200,12 @@ async function loadCatalogFromDisk() {
   try {
     const text = await fs.readFile(CATALOG_FILE, 'utf8');
     catalogState = JSON.parse(text);
+
+    if (!Array.isArray(catalogState.groups)) {
+      catalogState.groups = Array.isArray(catalogState.categories)
+        ? catalogState.categories.filter((x) => x?.kind === 'group' || !x?.kind)
+        : [];
+    }
   } catch (error) {
     console.error('Failed to load catalog from disk:', error);
   }
@@ -234,7 +252,7 @@ async function collectFilesRecursive(dir) {
 }
 
 function findFirstByName(files, name) {
-  const lower = name.toLowerCase();
+  const lower = String(name || '').toLowerCase();
   return files.find((f) => f.toLowerCase().includes(lower)) || null;
 }
 
@@ -242,35 +260,91 @@ function parseClassifierGroups(groups, parentId = null, acc = []) {
   for (const group of normalizeArray(groups)) {
     const id = firstText(group.Ид);
     const name = firstText(group.Наименование);
-    if (id && name) acc.push({ id, name, parentId, kind: 'group' });
 
-    const children = group.Группы?.Группа || group.Группа || [];
-    if (children) {
-      parseClassifierGroups(children, id || parentId, acc);
+    if (id && name) {
+      acc.push({
+        id,
+        name,
+        parentId: parentId || null,
+        kind: 'group'
+      });
+    }
+
+    const nested = group.Группы?.Группа || group.Группа || [];
+    if (normalizeArray(nested).length) {
+      parseClassifierGroups(nested, id, acc);
     }
   }
 
   return acc;
 }
 
-function parseClassifierCategories(categories, acc = []) {
-  for (const category of normalizeArray(categories)) {
-    const id = firstText(category.Ид);
-    const name = firstText(category.Наименование);
-    if (id && name) acc.push({ id, name, parentId: null, kind: 'category' });
+function buildPropertyNameMap(classifier) {
+  const map = new Map();
+
+  const properties = normalizeArray(classifier?.Свойства?.Свойство);
+  for (const prop of properties) {
+    const id = firstText(prop.Ид);
+    const name = firstText(prop.Наименование);
+    if (id && name) {
+      map.set(id, name);
+    }
   }
-  return acc;
+
+  return map;
 }
 
-function getProductPropMap(product) {
-  const result = {};
-  const values = normalizeArray(product.ЗначенияСвойств?.ЗначенияСвойства);
-  for (const v of values) {
-    const propId = firstText(v.Ид);
-    const propValue = firstText(v.Значение);
-    if (propId) result[propId] = propValue;
+function getProductPropEntries(product) {
+  const result = [];
+
+  const propRows = normalizeArray(
+    product.ЗначенияСвойств?.ЗначенияСвойства ||
+    product.ЗначенияСвойств?.ЗначениеСвойства
+  );
+
+  for (const row of propRows) {
+    result.push({
+      id: firstText(row.Ид),
+      value: firstText(row.Значение)
+    });
   }
+
   return result;
+}
+
+function getProductRequisiteEntries(product) {
+  const result = [];
+
+  const reqRows = normalizeArray(product.ЗначенияРеквизитов?.ЗначениеРеквизита);
+  for (const row of reqRows) {
+    result.push({
+      name: firstText(row.Наименование),
+      value: firstText(row.Значение)
+    });
+  }
+
+  return result;
+}
+
+function extractShelfLife(product, propertyNameMap) {
+  const requisites = getProductRequisiteEntries(product);
+
+  for (const req of requisites) {
+    const name = cleanText(req.name).toLowerCase();
+    if (name.includes('срок годности')) {
+      return parseDateToRu(req.value);
+    }
+  }
+
+  const props = getProductPropEntries(product);
+  for (const prop of props) {
+    const propName = cleanText(propertyNameMap.get(prop.id) || '').toLowerCase();
+    if (propName.includes('срок годности')) {
+      return parseDateToRu(prop.value);
+    }
+  }
+
+  return '';
 }
 
 async function parseImportXml(xmlPath) {
@@ -289,26 +363,12 @@ async function parseImportXml(xmlPath) {
   }
 
   const classifier = root?.Классификатор || catalog?.Классификатор || {};
-
-  const groupList = parseClassifierGroups(
+  const groups = parseClassifierGroups(
     classifier?.Группы?.Группа || catalog?.Группы?.Группа || []
   );
 
-  const categoryList = parseClassifierCategories(
-    classifier?.Категории?.Категория || catalog?.Категории?.Категория || []
-  );
-
-  const allCategories = [...groupList, ...categoryList];
-  const categoryMap = new Map(allCategories.map((c) => [c.id, c.name]));
-
-  const propertyDefs = normalizeArray(classifier.Свойства?.Свойство)
-    .map((p) => ({
-      id: firstText(p.Ид),
-      name: firstText(p.Наименование)
-    }))
-    .filter((p) => p.id && p.name);
-
-  const propertyNameMap = new Map(propertyDefs.map((p) => [p.id, p.name]));
+  const groupMap = new Map(groups.map((g) => [g.id, g.name]));
+  const propertyNameMap = buildPropertyNameMap(classifier);
 
   const products = normalizeArray(catalog.Товары?.Товар)
     .map((item) => {
@@ -324,30 +384,23 @@ async function parseImportXml(xmlPath) {
         .map(firstText)
         .filter(Boolean);
 
-      const categoryId = firstText(item.Категория) || groupIds[0] || '';
-      const categoryName = categoryMap.get(categoryId) || '';
+      const groupId = groupIds[0] || '';
+      const groupName = groupMap.get(groupId) || '';
 
       const imageRaw = firstText(item.Картинка);
       const barcode = firstText(item.Штрихкод);
-      const weight = Number(firstText(item.Вес)) || 0;
-      const propValues = getProductPropMap(item);
-
-      let shelfLife = '';
-      for (const [propId, value] of Object.entries(propValues)) {
-        const propName = propertyNameMap.get(propId);
-        if (cleanText(propName).toLowerCase() === 'срок годности') {
-          shelfLife = parseDateToRu(value);
-          break;
-        }
-      }
+      const weight = parseNumber(firstText(item.Вес), 0);
+      const shelfLife = extractShelfLife(item, propertyNameMap);
 
       return {
         id,
         vendorCode,
         barcode,
         name,
-        categoryId,
-        categoryName,
+        categoryId: groupId,
+        categoryName: groupName,
+        groupId,
+        groupName,
         groupIds,
         imageRaw,
         image: '',
@@ -355,25 +408,31 @@ async function parseImportXml(xmlPath) {
         weight,
         stock: 0,
         cartPrice: 0,
+        cartPriceText: '',
         displayPrice: 0,
+        displayPriceText: '',
         prices: []
       };
     })
     .filter((p) => p.id && p.name);
 
-  const categories = allCategories
-    .filter((c) => c.id && c.name)
+  const sortedGroups = groups
+    .filter((g) => g.id && g.name)
     .sort((a, b) =>
       a.name.localeCompare(b.name, 'ru', { sensitivity: 'base', numeric: true })
     )
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      parentId: c.parentId || null,
-      kind: c.kind
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      parentId: g.parentId || null,
+      kind: 'group'
     }));
 
-  return { categories, products };
+  return {
+    categories: sortedGroups,
+    groups: sortedGroups,
+    products
+  };
 }
 
 function extractPricesFromOffer(offer) {
@@ -385,10 +444,10 @@ function extractPricesFromOffer(offer) {
       typeId: firstText(row.ИдТипаЦены),
       typeName: firstText(row.Наименование),
       presentation: firstText(row.Представление),
-      value: Number(firstText(row.ЦенаЗаЕдиницу)) || 0,
+      value: parseNumber(firstText(row.ЦенаЗаЕдиницу), 0),
       currency: firstText(row.Валюта),
       unit: firstText(row.Единица),
-      coefficient: Number(firstText(row.Коэффициент)) || 1
+      coefficient: parseNumber(firstText(row.Коэффициент), 1)
     });
   }
 
@@ -422,7 +481,7 @@ async function parseOffersXml(xmlPath) {
   const offers = normalizeArray(packageNode.Предложения?.Предложение)
     .map((offer) => {
       const id = firstText(offer.Ид);
-      const quantity = Number(firstText(offer.Количество)) || 0;
+      const quantity = parseNumber(firstText(offer.Количество), 0);
       const vendorCode = firstText(offer.Артикул);
       const barcode = firstText(offer.Штрихкод);
 
@@ -440,32 +499,23 @@ async function parseOffersXml(xmlPath) {
 
 function pickCartAndDisplayPrice(prices) {
   if (!Array.isArray(prices) || !prices.length) {
-    return { cartPrice: 0, displayPrice: 0 };
+    return {
+      cartPrice: 0,
+      cartPriceText: '',
+      displayPrice: 0,
+      displayPriceText: ''
+    };
   }
 
-  const withNames = prices.map((p) => ({
-    ...p,
-    n: cleanText(p.resolvedName || p.typeName || p.presentation).toLowerCase()
-  }));
+  const displayRow = prices.find((p) => p.typeId === DISPLAY_PRICE_TYPE_ID) || null;
+  const cartRow = prices.find((p) => p.typeId === CART_PRICE_TYPE_ID) || null;
 
-  const piece =
-    withNames.find((p) => p.n.includes('штуч')) ||
-    withNames.find((p) => p.n.includes('рознич')) ||
-    null;
-
-  const sale =
-    withNames.find((p) => p.n.includes('продаж')) ||
-    withNames.find((p) => p.n.includes('основн')) ||
-    withNames.find((p) => p.n.includes('оптов')) ||
-    null;
-
-  const first = withNames[0] || null;
-  const second = withNames[1] || null;
-
-  const cartPrice = piece?.value || sale?.value || first?.value || 0;
-  const displayPrice = piece?.value || sale?.value || second?.value || cartPrice || 0;
-
-  return { cartPrice, displayPrice };
+  return {
+    cartPrice: cartRow?.value || 0,
+    cartPriceText: cartRow?.presentation || '',
+    displayPrice: displayRow?.value || 0,
+    displayPriceText: displayRow?.presentation || ''
+  };
 }
 
 function safeRelativePath(baseDir, fullPath) {
@@ -518,21 +568,21 @@ async function buildCatalogFromCommerceML(extractedDir) {
   ]);
 
   const productMap = new Map(importData.products.map((p) => [p.id, p]));
-
   let matchedOffers = 0;
 
   for (const offer of offersData.offers) {
-    let product = productMap.get(offer.id);
+    const rawOfferId = offer.id || '';
+    const productId = rawOfferId.includes('#') ? rawOfferId.split('#')[0] : rawOfferId;
 
-    if (!product && offer.id.includes('#')) {
-      product = productMap.get(offer.id.split('#')[0]);
-    }
-
+    const product = productMap.get(productId);
     if (!product) continue;
 
     const selected = pickCartAndDisplayPrice(offer.prices);
+
     product.cartPrice = selected.cartPrice;
+    product.cartPriceText = selected.cartPriceText;
     product.displayPrice = selected.displayPrice;
+    product.displayPriceText = selected.displayPriceText;
     product.stock = offer.quantity;
     product.prices = offer.prices;
 
@@ -567,18 +617,20 @@ async function buildCatalogFromCommerceML(extractedDir) {
     product.image = image || '';
   }
 
-  const categories = importData.categories.filter((c) => c.id && c.name);
+  const groups = importData.groups || [];
+  const categories = importData.categories || groups;
   const products = sortRuByName([...productMap.values()]);
 
   console.log('[CommerceML] import.xml:', path.basename(importXml));
   console.log('[CommerceML] offers.xml:', path.basename(offersXml));
-  console.log('[CommerceML] categories:', categories.length);
+  console.log('[CommerceML] groups:', groups.length);
   console.log('[CommerceML] products:', products.length);
   console.log('[CommerceML] offers matched:', matchedOffers);
 
   return {
     loadedAt: new Date().toISOString(),
     categories,
+    groups,
     products,
     totalOffers: offersData.offers.length,
     error: null,
@@ -681,6 +733,7 @@ async function tryImportFromExchangeDir() {
     loadedAt: catalog.loadedAt,
     products: catalog.products.length,
     categories: catalog.categories.length,
+    groups: Array.isArray(catalog.groups) ? catalog.groups.length : 0,
     totalOffers: catalog.totalOffers
   };
 }
@@ -786,6 +839,7 @@ app.get('/api/health', (req, res) => {
     loadedAt: catalogState.loadedAt,
     products: catalogState.products.length,
     categories: catalogState.categories.length,
+    groups: Array.isArray(catalogState.groups) ? catalogState.groups.length : 0,
     error: catalogState.error,
     source: catalogState.source,
     isFresh
@@ -823,6 +877,7 @@ app.post('/api/commerceml/upload-zip', requireAdmin, upload.single('archive'), a
       message: 'CommerceML успешно загружен',
       loadedAt: catalog.loadedAt,
       categories: catalog.categories.length,
+      groups: Array.isArray(catalog.groups) ? catalog.groups.length : 0,
       products: catalog.products.length,
       totalOffers: catalog.totalOffers
     });
@@ -858,7 +913,9 @@ app.post('/api/orders', async (req, res) => {
         name: cleanText(item.name),
         quantity,
         cartPrice,
+        cartPriceText: cleanText(item.cartPriceText),
         displayPrice: Number(item.displayPrice) || 0,
+        displayPriceText: cleanText(item.displayPriceText),
         sum: quantity * cartPrice
       };
     })
