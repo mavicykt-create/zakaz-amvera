@@ -717,25 +717,32 @@ async function handleExchangeRequest(req, res) {
   }
 
   if (mode === 'file') {
-    await ensureExchangeDir();
-
-    const filename = sanitizeExchangeFilename(req.query.filename || req.query.file || '');
-    if (!filename) {
-      return res
-        .status(400)
-        .type('text/plain; charset=utf-8')
-        .send('failure\nНе передано имя файла');
-    }
-
-    const body = Buffer.isBuffer(req.body)
-      ? req.body
-      : Buffer.from(req.body || '');
-
-    await writeExchangeFile(filename, body);
-
-    console.log(`[1C] saved file: ${filename}, bytes=${body.length}`);
-    return res.type('text/plain; charset=utf-8').send('success');
+  await ensureExchangeDir();
+  const filename = sanitizeExchangeFilename(req.query.filename || req.query.file || '');
+  if (!filename) {
+    return res.status(400).type('text/plain; charset=utf-8').send('failure\nНе передано имя файла');
   }
+
+  const target = path.join(EXCHANGE_UPLOAD_DIR, filename);
+  const targetDir = path.dirname(target);
+  await fs.mkdir(targetDir, { recursive: true });
+
+  const body = Buffer.isBuffer(req.body)
+    ? req.body
+    : Buffer.from(req.body || '');
+
+  console.log('[1C] save start:', filename);
+
+  await fs.writeFile(target, body);
+
+  console.log('[1C] saved file:', {
+    filename,
+    bytes: body.length,
+    target
+  });
+
+  return res.type('text/plain; charset=utf-8').send('success');
+}
 
   if (mode === 'import') {
     try {
