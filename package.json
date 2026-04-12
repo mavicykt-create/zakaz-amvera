@@ -1,25 +1,11 @@
-diff --git a/package.json b/package.json
-index b72593ecb5a0e4a5c3c6f8cb54ff65d31a4d2fa3..2833c9344760c1be292fc171d961208456bb62c1 100644
---- a/package.json
-+++ b/package.json
-@@ -1,18 +1,19 @@
- {
-   "name": "amvera-mobile-order",
-   "version": "1.0.0",
-   "type": "module",
-   "main": "server.js",
-   "scripts": {
--    "start": "node server.js"
-+    "start": "node server.js",
-+    "dev": "node --watch server.js"
-   },
-   "dependencies": {
-     "adm-zip": "^0.5.16",
-     "cors": "^2.8.5",
-     "dotenv": "^16.4.5",
-     "express": "^4.21.2",
-     "multer": "^1.4.5-lts.1",
-     "sharp": "^0.33.5",
-     "xml2js": "^0.6.2"
-   }
- }
+{
+  "name": "online-shop",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
