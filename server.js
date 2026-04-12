@@ -25,9 +25,10 @@ const EXCHANGE_LOGIN = String(process.env.EXCHANGE_LOGIN || 'admin');
 const EXCHANGE_PASSWORD = String(process.env.EXCHANGE_PASSWORD || ADMIN_PASSWORD);
 const EXCHANGE_SESSION_NAME = 'sessid';
 const EXCHANGE_SESSION_ID = 'zakazamvera';
-const MAX_EXCHANGE_FILE_SIZE = Number(process.env.MAX_EXCHANGE_FILE_SIZE || 200 * 1024 * 1024);
+const MAX_EXCHANGE_FILE_SIZE = Number(
+  process.env.MAX_EXCHANGE_FILE_SIZE || 200 * 1024 * 1024
+);
 
-// Для Amvera лучше /data. Локально можно переопределить через env.
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : '/data';
@@ -234,7 +235,7 @@ async function collectFilesRecursive(dir) {
 
 function findFirstByName(files, name) {
   const lower = name.toLowerCase();
-  return files.find((f) => path.basename(f).toLowerCase() === lower) || null;
+  return files.find((f) => f.toLowerCase().includes(lower)) || null;
 }
 
 function parseClassifierGroups(groups, parentId = null, acc = []) {
@@ -243,11 +244,7 @@ function parseClassifierGroups(groups, parentId = null, acc = []) {
     const name = firstText(group.Наименование);
     if (id && name) acc.push({ id, name, parentId, kind: 'group' });
 
-    const children =
-      group.Группы?.Группа ||
-      group.Группа ||
-      [];
-
+    const children = group.Группы?.Группа || group.Группа || [];
     if (children) {
       parseClassifierGroups(children, id || parentId, acc);
     }
@@ -465,7 +462,6 @@ function pickCartAndDisplayPrice(prices) {
   const first = withNames[0] || null;
   const second = withNames[1] || null;
 
-  // Для твоих файлов: "Штучно" — адекватная цена для сайта/корзины.
   const cartPrice = piece?.value || sale?.value || first?.value || 0;
   const displayPrice = piece?.value || sale?.value || second?.value || cartPrice || 0;
 
@@ -495,7 +491,11 @@ async function copyImagesToStorage(extractedDir) {
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.copyFile(file, target);
 
-    const publicUrl = `/uploads/images/${normalizedRel.split('/').map(encodeURIComponent).join('/')}`;
+    const publicUrl = `/uploads/images/${normalizedRel
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}`;
+
     sourceByRelative.set(normalizedRel, publicUrl);
     sourceByBase.set(path.basename(file), publicUrl);
   }
@@ -535,6 +535,7 @@ async function buildCatalogFromCommerceML(extractedDir) {
     product.displayPrice = selected.displayPrice;
     product.stock = offer.quantity;
     product.prices = offer.prices;
+
     if (!product.vendorCode) product.vendorCode = offer.vendorCode;
     if (!product.barcode) product.barcode = offer.barcode;
 
@@ -692,6 +693,7 @@ async function tryImportFromExchangeDir() {
 async function handleExchangeRequest(req, res) {
   const mode = String(req.query.mode || '').toLowerCase();
   const type = String(req.query.type || '').toLowerCase();
+  const importFilename = String(req.query.filename || '').toLowerCase();
 
   console.log(
     `[1C] mode=${mode || '-'} type=${type || '-'} filename=${String(req.query.filename || '')} length=${req.headers['content-length'] || '0'}`
@@ -717,47 +719,55 @@ async function handleExchangeRequest(req, res) {
   }
 
   if (mode === 'file') {
-  await ensureExchangeDir();
-  const filename = sanitizeExchangeFilename(req.query.filename || req.query.file || '');
-  if (!filename) {
-    return res.status(400).type('text/plain; charset=utf-8').send('failure\nНе передано имя файла');
+    await ensureExchangeDir();
+
+    const filename = sanitizeExchangeFilename(req.query.filename || req.query.file || '');
+    if (!filename) {
+      return res
+        .status(400)
+        .type('text/plain; charset=utf-8')
+        .send('failure\nНе передано имя файла');
+    }
+
+    const body = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(req.body || '');
+
+    console.log('[1C] save start:', filename);
+
+    const target = await writeExchangeFile(filename, body);
+
+    console.log('[1C] saved file:', {
+      filename,
+      bytes: body.length,
+      target
+    });
+
+    return res.type('text/plain; charset=utf-8').send('success');
   }
-
-  const target = path.join(EXCHANGE_UPLOAD_DIR, filename);
-  const targetDir = path.dirname(target);
-  await fs.mkdir(targetDir, { recursive: true });
-
-  const body = Buffer.isBuffer(req.body)
-    ? req.body
-    : Buffer.from(req.body || '');
-
-  console.log('[1C] save start:', filename);
-
-  await fs.writeFile(target, body);
-
-  console.log('[1C] saved file:', {
-    filename,
-    bytes: body.length,
-    target
-  });
-
-  return res.type('text/plain; charset=utf-8').send('success');
-}
 
   if (mode === 'import') {
     try {
-      const result = await tryImportFromExchangeDir();
-      console.log('[1C] import result:', result);
-
-      if (!result.ok) {
-        return res
-          .type('text/plain; charset=utf-8')
-          .send(`progress\nОжидание файла ${result.waitingFor}`);
+      if (importFilename.includes('import')) {
+        console.log('[1C] import step for import.xml');
+        return res.type('text/plain; charset=utf-8').send('success');
       }
 
-      return res
-        .type('text/plain; charset=utf-8')
-        .send('success');
+      if (importFilename.includes('offers')) {
+        const result = await tryImportFromExchangeDir();
+        console.log('[1C] import result:', result);
+
+        if (!result.ok) {
+          return res
+            .status(500)
+            .type('text/plain; charset=utf-8')
+            .send(`failure\nНе найден файл ${result.waitingFor}`);
+        }
+
+        return res.type('text/plain; charset=utf-8').send('success');
+      }
+
+      return res.type('text/plain; charset=utf-8').send('success');
     } catch (error) {
       console.error('[1C] import error:', error);
       return res
