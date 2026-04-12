@@ -13,18 +13,25 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '12345');
+
 const IMAGE_WIDTH = Number(process.env.IMAGE_WIDTH || 220);
 const IMAGE_QUALITY = Number(process.env.IMAGE_QUALITY || 42);
 const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS || 6 * 60 * 60 * 1000);
+
 const EXCHANGE_LOGIN = String(process.env.EXCHANGE_LOGIN || 'admin');
 const EXCHANGE_PASSWORD = String(process.env.EXCHANGE_PASSWORD || ADMIN_PASSWORD);
 const EXCHANGE_SESSION_NAME = 'sessid';
 const EXCHANGE_SESSION_ID = 'zakazamvera';
-const MAX_EXCHANGE_FILE_SIZE = Number(process.env.MAX_EXCHANGE_FILE_SIZE || 1024 * 1024 * 500);
+const MAX_EXCHANGE_FILE_SIZE = Number(process.env.MAX_EXCHANGE_FILE_SIZE || 200 * 1024 * 1024);
 
-const DATA_DIR = path.join(__dirname, 'data');
+// Для Amvera лучше /data. Локально можно переопределить через env.
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : '/data';
+
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const CATALOG_FILE = path.join(DATA_DIR, 'catalog.json');
 const IMAGE_CACHE_DIR = path.join(DATA_DIR, 'cache');
@@ -49,12 +56,12 @@ app.use(cors());
 app.all(
   ['/1c_exchange.php', '/commerceml/1c_exchange.php', '/bitrix/admin/1c_exchange.php'],
   requireExchangeAuth,
-  express.raw({ type: '*/*', limit: '200mb' }),
+  express.raw({ type: '*/*', limit: MAX_EXCHANGE_FILE_SIZE }),
   async (req, res) => {
     try {
       await handleExchangeRequest(req, res);
     } catch (error) {
-      console.error('1C exchange error:', error);
+      console.error('1C exchange fatal error:', error);
       res
         .status(500)
         .type('text/plain; charset=utf-8')
@@ -69,7 +76,7 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 
 const upload = multer({
   dest: TMP_DIR,
-  limits: { fileSize: 1024 * 1024 * 500 }
+  limits: { fileSize: MAX_EXCHANGE_FILE_SIZE }
 });
 
 async function ensureStorage() {
@@ -180,7 +187,9 @@ async function loadCatalogFromDisk() {
   try {
     const text = await fs.readFile(CATALOG_FILE, 'utf8');
     catalogState = JSON.parse(text);
-  } catch {}
+  } catch (error) {
+    console.error('Failed to load catalog from disk:', error);
+  }
 }
 
 function simpleHash(input) {
@@ -224,16 +233,34 @@ async function collectFilesRecursive(dir) {
 }
 
 function findFirstByName(files, name) {
-  return files.find((f) => f.toLowerCase().includes(name.toLowerCase())) || null;
+  const lower = name.toLowerCase();
+  return files.find((f) => path.basename(f).toLowerCase() === lower) || null;
 }
 
 function parseClassifierGroups(groups, parentId = null, acc = []) {
   for (const group of normalizeArray(groups)) {
     const id = firstText(group.Ид);
     const name = firstText(group.Наименование);
-    if (id && name) acc.push({ id, name, parentId });
-    const children = group.Группы?.Группа;
-    if (children) parseClassifierGroups(children, id || parentId, acc);
+    if (id && name) acc.push({ id, name, parentId, kind: 'group' });
+
+    const children =
+      group.Группы?.Группа ||
+      group.Группа ||
+      [];
+
+    if (children) {
+      parseClassifierGroups(children, id || parentId, acc);
+    }
+  }
+
+  return acc;
+}
+
+function parseClassifierCategories(categories, acc = []) {
+  for (const category of normalizeArray(categories)) {
+    const id = firstText(category.Ид);
+    const name = firstText(category.Наименование);
+    if (id && name) acc.push({ id, name, parentId: null, kind: 'category' });
   }
   return acc;
 }
@@ -251,20 +278,31 @@ function getProductPropMap(product) {
 
 async function parseImportXml(xmlPath) {
   const xml = await fs.readFile(xmlPath, 'utf8');
-  const parsed = await parseStringPromise(xml, { explicitArray: false, trim: true });
+  const parsed = await parseStringPromise(xml, {
+    explicitArray: false,
+    trim: true,
+    mergeAttrs: false
+  });
 
-  const catalog = parsed?.КоммерческаяИнформация?.Каталог;
-  if (!catalog) throw new Error('В import.xml не найден узел КоммерческаяИнформация/Каталог');
+  const root = parsed?.КоммерческаяИнформация;
+  const catalog = root?.Каталог;
 
-  const classifier = catalog.Классификатор || {};
+  if (!catalog) {
+    throw new Error('В import.xml не найден узел КоммерческаяИнформация/Каталог');
+  }
 
-  const groupsSource =
-    catalog.Классификатор?.Группы?.Группа ||
-    catalog.Группы?.Группа ||
-    [];
+  const classifier = root?.Классификатор || catalog?.Классификатор || {};
 
-  const groupList = parseClassifierGroups(groupsSource);
-  const categoryMap = new Map(groupList.map((g) => [g.id, g.name]));
+  const groupList = parseClassifierGroups(
+    classifier?.Группы?.Группа || catalog?.Группы?.Группа || []
+  );
+
+  const categoryList = parseClassifierCategories(
+    classifier?.Категории?.Категория || catalog?.Категории?.Категория || []
+  );
+
+  const allCategories = [...groupList, ...categoryList];
+  const categoryMap = new Map(allCategories.map((c) => [c.id, c.name]));
 
   const propertyDefs = normalizeArray(classifier.Свойства?.Свойство)
     .map((p) => ({
@@ -278,60 +316,102 @@ async function parseImportXml(xmlPath) {
   const products = normalizeArray(catalog.Товары?.Товар)
     .map((item) => {
       const id = firstText(item.Ид);
-      const article = firstText(item.Артикул) || firstText(item.Код) || firstText(item.АртикулТовара);
+      const vendorCode =
+        firstText(item.Артикул) ||
+        firstText(item.Код) ||
+        firstText(item.АртикулТовара);
+
       const name = firstText(item.Наименование);
-      const groupId = firstText(item.Группы?.Ид || item.Группы?.Группа?.Ид);
+
+      const groupIds = normalizeArray(item.Группы?.Ид || item.Группы?.Группа?.Ид)
+        .map(firstText)
+        .filter(Boolean);
+
+      const categoryId = firstText(item.Категория) || groupIds[0] || '';
+      const categoryName = categoryMap.get(categoryId) || '';
+
       const imageRaw = firstText(item.Картинка);
+      const barcode = firstText(item.Штрихкод);
+      const weight = Number(firstText(item.Вес)) || 0;
       const propValues = getProductPropMap(item);
 
       let shelfLife = '';
       for (const [propId, value] of Object.entries(propValues)) {
         const propName = propertyNameMap.get(propId);
-        if (propName && cleanText(propName).toLowerCase() === 'срок годности') {
+        if (cleanText(propName).toLowerCase() === 'срок годности') {
           shelfLife = parseDateToRu(value);
+          break;
         }
       }
 
       return {
         id,
-        vendorCode: article,
+        vendorCode,
+        barcode,
         name,
-        categoryId: groupId,
-        categoryName: categoryMap.get(groupId) || '',
+        categoryId,
+        categoryName,
+        groupIds,
         imageRaw,
+        image: '',
         shelfLife,
+        weight,
         stock: 0,
         cartPrice: 0,
-        displayPrice: 0
+        displayPrice: 0,
+        prices: []
       };
     })
     .filter((p) => p.id && p.name);
 
-  return { categories: groupList.map((g) => ({ id: g.id, name: g.name })), products };
+  const categories = allCategories
+    .filter((c) => c.id && c.name)
+    .sort((a, b) =>
+      a.name.localeCompare(b.name, 'ru', { sensitivity: 'base', numeric: true })
+    )
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      parentId: c.parentId || null,
+      kind: c.kind
+    }));
+
+  return { categories, products };
 }
 
 function extractPricesFromOffer(offer) {
   const prices = [];
   const rows = normalizeArray(offer.Цены?.Цена);
+
   for (const row of rows) {
     prices.push({
       typeId: firstText(row.ИдТипаЦены),
-      typeName: firstText(row.Представление || row.Наименование),
-      value: Number(firstText(row.ЦенаЗаЕдиницу)) || 0
+      typeName: firstText(row.Наименование),
+      presentation: firstText(row.Представление),
+      value: Number(firstText(row.ЦенаЗаЕдиницу)) || 0,
+      currency: firstText(row.Валюта),
+      unit: firstText(row.Единица),
+      coefficient: Number(firstText(row.Коэффициент)) || 1
     });
   }
+
   return prices;
 }
 
 async function parseOffersXml(xmlPath) {
   const xml = await fs.readFile(xmlPath, 'utf8');
-  const parsed = await parseStringPromise(xml, { explicitArray: false, trim: true });
+  const parsed = await parseStringPromise(xml, {
+    explicitArray: false,
+    trim: true,
+    mergeAttrs: false
+  });
 
-  const packageNode =
-    parsed?.КоммерческаяИнформация?.ПакетПредложений ||
-    parsed?.КоммерческаяИнформация?.Каталог;
+  const root = parsed?.КоммерческаяИнформация;
+  const packageNode = root?.ПакетПредложений || root?.Каталог;
 
-  if (!packageNode) throw new Error('В offers.xml не найден узел ПакетПредложений');
+  if (!packageNode) {
+    throw new Error('В offers.xml не найден узел ПакетПредложений');
+  }
 
   const priceTypes = normalizeArray(packageNode.ТипыЦен?.ТипЦены)
     .map((p) => ({
@@ -346,11 +426,15 @@ async function parseOffersXml(xmlPath) {
     .map((offer) => {
       const id = firstText(offer.Ид);
       const quantity = Number(firstText(offer.Количество)) || 0;
+      const vendorCode = firstText(offer.Артикул);
+      const barcode = firstText(offer.Штрихкод);
+
       const prices = extractPricesFromOffer(offer).map((p) => ({
         ...p,
-        resolvedName: p.typeName || priceTypeNameMap.get(p.typeId) || ''
+        resolvedName: cleanText(p.typeName || priceTypeNameMap.get(p.typeId) || p.presentation)
       }));
-      return { id, quantity, prices };
+
+      return { id, quantity, vendorCode, barcode, prices };
     })
     .filter((o) => o.id);
 
@@ -358,41 +442,65 @@ async function parseOffersXml(xmlPath) {
 }
 
 function pickCartAndDisplayPrice(prices) {
-  let cartPrice = 0;
-  let displayPrice = 0;
-
-  for (const p of prices) {
-    const n = cleanText(p.resolvedName || p.typeName).toLowerCase();
-
-    if (!cartPrice && (n.includes('заказ') || n.includes('основн') || n.includes('оптов') || n.includes('продаж'))) {
-      cartPrice = p.value;
-    }
-
-    if (!displayPrice && (n.includes('витрин') || n.includes('сайт') || n.includes('справоч') || n.includes('рекоменд'))) {
-      displayPrice = p.value;
-    }
+  if (!Array.isArray(prices) || !prices.length) {
+    return { cartPrice: 0, displayPrice: 0 };
   }
 
-  if (!cartPrice && prices[0]) cartPrice = prices[0].value;
-  if (!displayPrice && prices[1]) displayPrice = prices[1].value;
-  if (!displayPrice) displayPrice = cartPrice;
+  const withNames = prices.map((p) => ({
+    ...p,
+    n: cleanText(p.resolvedName || p.typeName || p.presentation).toLowerCase()
+  }));
+
+  const piece =
+    withNames.find((p) => p.n.includes('штуч')) ||
+    withNames.find((p) => p.n.includes('рознич')) ||
+    null;
+
+  const sale =
+    withNames.find((p) => p.n.includes('продаж')) ||
+    withNames.find((p) => p.n.includes('основн')) ||
+    withNames.find((p) => p.n.includes('оптов')) ||
+    null;
+
+  const first = withNames[0] || null;
+  const second = withNames[1] || null;
+
+  // Для твоих файлов: "Штучно" — адекватная цена для сайта/корзины.
+  const cartPrice = piece?.value || sale?.value || first?.value || 0;
+  const displayPrice = piece?.value || sale?.value || second?.value || cartPrice || 0;
 
   return { cartPrice, displayPrice };
+}
+
+function safeRelativePath(baseDir, fullPath) {
+  const rel = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+  if (rel.startsWith('../')) {
+    throw new Error('Некорректный относительный путь');
+  }
+  return rel;
 }
 
 async function copyImagesToStorage(extractedDir) {
   const files = await collectFilesRecursive(extractedDir);
   const imageFiles = files.filter((f) => /\.(jpg|jpeg|png|webp|gif)$/i.test(f));
+
+  const sourceByRelative = new Map();
   const sourceByBase = new Map();
 
   for (const file of imageFiles) {
-    const base = path.basename(file);
-    const target = path.join(SOURCE_IMAGES_DIR, base);
+    const rel = safeRelativePath(extractedDir, file);
+    const normalizedRel = rel.replace(/^\/+/, '');
+    const target = path.join(SOURCE_IMAGES_DIR, normalizedRel);
+
+    await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.copyFile(file, target);
-    sourceByBase.set(base, `/uploads/images/${base}`);
+
+    const publicUrl = `/uploads/images/${normalizedRel.split('/').map(encodeURIComponent).join('/')}`;
+    sourceByRelative.set(normalizedRel, publicUrl);
+    sourceByBase.set(path.basename(file), publicUrl);
   }
 
-  return sourceByBase;
+  return { sourceByRelative, sourceByBase };
 }
 
 async function buildCatalogFromCommerceML(extractedDir) {
@@ -400,10 +508,10 @@ async function buildCatalogFromCommerceML(extractedDir) {
   const importXml = findFirstByName(files, 'import.xml');
   const offersXml = findFirstByName(files, 'offers.xml');
 
-  if (!importXml) throw new Error('В архиве не найден import.xml');
-  if (!offersXml) throw new Error('В архиве не найден offers.xml');
+  if (!importXml) throw new Error('В каталоге обмена не найден import.xml');
+  if (!offersXml) throw new Error('В каталоге обмена не найден offers.xml');
 
-  const [importData, offersData, imageMap] = await Promise.all([
+  const [importData, offersData, imageMaps] = await Promise.all([
     parseImportXml(importXml),
     parseOffersXml(offersXml),
     copyImagesToStorage(extractedDir)
@@ -411,44 +519,67 @@ async function buildCatalogFromCommerceML(extractedDir) {
 
   const productMap = new Map(importData.products.map((p) => [p.id, p]));
 
+  let matchedOffers = 0;
+
   for (const offer of offersData.offers) {
-    const product = productMap.get(offer.id);
+    let product = productMap.get(offer.id);
+
+    if (!product && offer.id.includes('#')) {
+      product = productMap.get(offer.id.split('#')[0]);
+    }
+
     if (!product) continue;
+
     const selected = pickCartAndDisplayPrice(offer.prices);
     product.cartPrice = selected.cartPrice;
     product.displayPrice = selected.displayPrice;
     product.stock = offer.quantity;
+    product.prices = offer.prices;
+    if (!product.vendorCode) product.vendorCode = offer.vendorCode;
+    if (!product.barcode) product.barcode = offer.barcode;
+
+    matchedOffers += 1;
   }
 
   for (const product of productMap.values()) {
+    let image = '';
+
     if (product.imageRaw) {
-      const base = path.basename(product.imageRaw);
-      product.image = imageMap.get(base) || '';
-    } else if (product.vendorCode) {
+      const normalizedRaw = product.imageRaw.replace(/\\/g, '/').replace(/^\/+/, '');
+      image =
+        imageMaps.sourceByRelative.get(normalizedRaw) ||
+        imageMaps.sourceByBase.get(path.basename(normalizedRaw)) ||
+        '';
+    }
+
+    if (!image && product.vendorCode) {
       const tryNames = [
         `${product.vendorCode}.jpg`,
         `${product.vendorCode}.jpeg`,
         `${product.vendorCode}.png`,
         `${product.vendorCode}.webp`
       ];
-      const found = tryNames.find((name) => imageMap.has(name));
-      product.image = found ? imageMap.get(found) : '';
-    } else {
-      product.image = '';
+      const found = tryNames.find((name) => imageMaps.sourceByBase.has(name));
+      image = found ? imageMaps.sourceByBase.get(found) : '';
     }
+
+    product.image = image || '';
   }
 
-  const categories = importData.categories
-    .filter((c) => c.id && c.name)
-    .sort((a, b) => a.name.localeCompare(b.name, 'ru', { sensitivity: 'base', numeric: true }));
-
+  const categories = importData.categories.filter((c) => c.id && c.name);
   const products = sortRuByName([...productMap.values()]);
+
+  console.log('[CommerceML] import.xml:', path.basename(importXml));
+  console.log('[CommerceML] offers.xml:', path.basename(offersXml));
+  console.log('[CommerceML] categories:', categories.length);
+  console.log('[CommerceML] products:', products.length);
+  console.log('[CommerceML] offers matched:', matchedOffers);
 
   return {
     loadedAt: new Date().toISOString(),
     categories,
     products,
-    totalOffers: products.length,
+    totalOffers: offersData.offers.length,
     error: null,
     source: 'commerceml'
   };
@@ -461,10 +592,12 @@ async function saveCatalog(catalog) {
 
 function decodeBasicAuth(header = '') {
   if (!header || !header.startsWith('Basic ')) return null;
+
   try {
     const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
     const idx = decoded.indexOf(':');
     if (idx === -1) return null;
+
     return {
       login: decoded.slice(0, idx),
       password: decoded.slice(idx + 1)
@@ -476,10 +609,12 @@ function decodeBasicAuth(header = '') {
 
 function requireExchangeAuth(req, res, next) {
   const creds = decodeBasicAuth(String(req.headers.authorization || ''));
+
   if (!creds || creds.login !== EXCHANGE_LOGIN || creds.password !== EXCHANGE_PASSWORD) {
     res.setHeader('WWW-Authenticate', 'Basic realm="1C Exchange"');
-    return res.status(401).send('failure\nUnauthorized');
+    return res.status(401).type('text/plain; charset=utf-8').send('failure\nUnauthorized');
   }
+
   next();
 }
 
@@ -487,9 +622,16 @@ function sanitizeExchangeFilename(filename) {
   const normalized = String(filename || '')
     .replace(/\\/g, '/')
     .replace(/^\/+/, '')
-    .replace(/\.\.(\/|\\)/g, '')
+    .replace(/\/+/g, '/')
     .trim();
-  return normalized;
+
+  const parts = normalized
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => part !== '.' && part !== '..');
+
+  return parts.join('/');
 }
 
 async function ensureExchangeDir() {
@@ -501,22 +643,49 @@ async function resetExchangeDir() {
   await fs.mkdir(EXCHANGE_UPLOAD_DIR, { recursive: true });
 }
 
+async function writeExchangeFile(filename, body) {
+  const target = path.join(EXCHANGE_UPLOAD_DIR, filename);
+  const targetDir = path.dirname(target);
+
+  await fs.mkdir(targetDir, { recursive: true });
+
+  let exists = false;
+  try {
+    await fs.access(target);
+    exists = true;
+  } catch {}
+
+  if (exists) {
+    await fs.appendFile(target, body);
+  } else {
+    await fs.writeFile(target, body);
+  }
+
+  return target;
+}
+
 async function tryImportFromExchangeDir() {
   const files = await collectFilesRecursive(EXCHANGE_UPLOAD_DIR).catch(() => []);
   const importXml = findFirstByName(files, 'import.xml');
   const offersXml = findFirstByName(files, 'offers.xml');
 
   if (!importXml || !offersXml) {
-    return { ok: false, waitingFor: !importXml ? 'import.xml' : 'offers.xml' };
+    return {
+      ok: false,
+      waitingFor: !importXml ? 'import.xml' : 'offers.xml',
+      files: files.map((f) => safeRelativePath(EXCHANGE_UPLOAD_DIR, f))
+    };
   }
 
   const catalog = await buildCatalogFromCommerceML(EXCHANGE_UPLOAD_DIR);
   await saveCatalog(catalog);
+
   return {
     ok: true,
     loadedAt: catalog.loadedAt,
     products: catalog.products.length,
-    categories: catalog.categories.length
+    categories: catalog.categories.length,
+    totalOffers: catalog.totalOffers
   };
 }
 
@@ -524,53 +693,77 @@ async function handleExchangeRequest(req, res) {
   const mode = String(req.query.mode || '').toLowerCase();
   const type = String(req.query.type || '').toLowerCase();
 
+  console.log(
+    `[1C] mode=${mode || '-'} type=${type || '-'} filename=${String(req.query.filename || '')} length=${req.headers['content-length'] || '0'}`
+  );
+
   if (type && type !== 'catalog') {
-    return res.type('text/plain; charset=utf-8').send('failure\nПоддерживается только type=catalog');
+    return res
+      .type('text/plain; charset=utf-8')
+      .send('failure\nПоддерживается только type=catalog');
   }
 
   if (mode === 'checkauth') {
-    return res.type('text/plain; charset=utf-8').send(`success\n${EXCHANGE_SESSION_NAME}\n${EXCHANGE_SESSION_ID}`);
+    return res
+      .type('text/plain; charset=utf-8')
+      .send(`success\n${EXCHANGE_SESSION_NAME}\n${EXCHANGE_SESSION_ID}`);
   }
 
   if (mode === 'init') {
-    return res.type('text/plain; charset=utf-8').send(`zip=no\nfile_limit=${MAX_EXCHANGE_FILE_SIZE}`);
+    await resetExchangeDir();
+    return res
+      .type('text/plain; charset=utf-8')
+      .send(`zip=no\nfile_limit=${MAX_EXCHANGE_FILE_SIZE}`);
   }
 
   if (mode === 'file') {
     await ensureExchangeDir();
+
     const filename = sanitizeExchangeFilename(req.query.filename || req.query.file || '');
     if (!filename) {
-      return res.status(400).type('text/plain; charset=utf-8').send('failure\nНе передано имя файла');
+      return res
+        .status(400)
+        .type('text/plain; charset=utf-8')
+        .send('failure\nНе передано имя файла');
     }
-
-    const target = path.join(EXCHANGE_UPLOAD_DIR, filename);
-    const targetDir = path.dirname(target);
-    await fs.mkdir(targetDir, { recursive: true });
 
     const body = Buffer.isBuffer(req.body)
       ? req.body
       : Buffer.from(req.body || '');
 
-    await fs.writeFile(target, body);
+    await writeExchangeFile(filename, body);
+
+    console.log(`[1C] saved file: ${filename}, bytes=${body.length}`);
     return res.type('text/plain; charset=utf-8').send('success');
   }
 
   if (mode === 'import') {
-    console.log('IMPORT START');
-
     try {
       const result = await tryImportFromExchangeDir();
-      console.log('IMPORT RESULT:', result);
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.send('success\n');
-    } catch (e) {
-      console.error('IMPORT ERROR:', e);
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.send(`failure\n${e.message || 'error'}`);
+      console.log('[1C] import result:', result);
+
+      if (!result.ok) {
+        return res
+          .type('text/plain; charset=utf-8')
+          .send(`progress\nОжидание файла ${result.waitingFor}`);
+      }
+
+      return res
+        .type('text/plain; charset=utf-8')
+        .send('success');
+    } catch (error) {
+      console.error('[1C] import error:', error);
+      return res
+        .status(500)
+        .type('text/plain; charset=utf-8')
+        .send(`failure\n${error.message || 'Ошибка импорта'}`);
     }
   }
 
-  return res.status(400).type('text/plain; charset=utf-8').send('failure\nНеизвестный mode');
+  return res
+    .status(400)
+    .type('text/plain; charset=utf-8')
+    .send('failure\nНеизвестный mode');
 }
 
 app.get('/api/health', (req, res) => {
@@ -619,10 +812,15 @@ app.post('/api/commerceml/upload-zip', requireAdmin, upload.single('archive'), a
       message: 'CommerceML успешно загружен',
       loadedAt: catalog.loadedAt,
       categories: catalog.categories.length,
-      products: catalog.products.length
+      products: catalog.products.length,
+      totalOffers: catalog.totalOffers
     });
   } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || 'Ошибка обработки CommerceML' });
+    console.error('CommerceML ZIP import error:', error);
+    res.status(500).json({
+      ok: false,
+      error: error.message || 'Ошибка обработки CommerceML'
+    });
   } finally {
     refreshInProgress = false;
     try { await fs.rm(req.file.path, { force: true }); } catch {}
@@ -642,6 +840,7 @@ app.post('/api/orders', async (req, res) => {
     .map((item) => {
       const quantity = Number(item.quantity) || 0;
       const cartPrice = Number(item.cartPrice) || 0;
+
       return {
         id: String(item.id || ''),
         vendorCode: cleanText(item.vendorCode),
@@ -655,10 +854,14 @@ app.post('/api/orders', async (req, res) => {
     .filter((item) => item.quantity > 0);
 
   if (!normalizedItems.length) {
-    return res.status(400).json({ ok: false, error: 'Нет товаров с количеством больше нуля' });
+    return res.status(400).json({
+      ok: false,
+      error: 'Нет товаров с количеством больше нуля'
+    });
   }
 
   const orders = await readOrders();
+
   const order = {
     id: `ORD-${Date.now()}`,
     createdAt: new Date().toISOString(),
@@ -683,11 +886,13 @@ app.get('/api/orders', requireAdmin, async (req, res) => {
 
 app.get('/img', async (req, res) => {
   const imageUrl = String(req.query.url || '');
-  if (!imageUrl) return res.status(400).send('No url');
+  if (!imageUrl) {
+    return res.status(400).send('No url');
+  }
 
   let resolvedPath = imageUrl;
   if (imageUrl.startsWith('/uploads/')) {
-    resolvedPath = path.join(__dirname, 'data', imageUrl.replace(/^\/uploads\//, 'uploads/'));
+    resolvedPath = path.join(DATA_DIR, imageUrl.replace(/^\/uploads\//, 'uploads/'));
   }
 
   const key = simpleHash(`${imageUrl}:${IMAGE_WIDTH}:${IMAGE_QUALITY}`);
@@ -701,17 +906,29 @@ app.get('/img', async (req, res) => {
 
   try {
     let buffer;
+
     if (imageUrl.startsWith('/uploads/')) {
       buffer = await fs.readFile(resolvedPath);
     } else {
-      const response = await fetch(imageUrl, { headers: { 'user-agent': 'Mozilla/5.0 Mobile Order Bot' } });
-      if (!response.ok) throw new Error('Image fetch failed');
+      const response = await fetch(imageUrl, {
+        headers: { 'user-agent': 'Mozilla/5.0 Mobile Order Bot' }
+      });
+
+      if (!response.ok) {
+        throw new Error('Image fetch failed');
+      }
+
       const arrayBuffer = await response.arrayBuffer();
       buffer = Buffer.from(arrayBuffer);
     }
 
     const optimized = await sharp(buffer)
-      .resize({ width: IMAGE_WIDTH, height: IMAGE_WIDTH, fit: 'inside', withoutEnlargement: true })
+      .resize({
+        width: IMAGE_WIDTH,
+        height: IMAGE_WIDTH,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
       .webp({ quality: IMAGE_QUALITY })
       .toBuffer();
 
@@ -720,10 +937,15 @@ app.get('/img', async (req, res) => {
 
     res.setHeader('Content-Type', 'image/webp');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(optimized);
-  } catch {
-    if (imageUrl.startsWith('/uploads/')) return res.sendFile(resolvedPath);
-    res.redirect(imageUrl);
+    return res.send(optimized);
+  } catch (error) {
+    console.error('Image proxy error:', error);
+
+    if (imageUrl.startsWith('/uploads/')) {
+      return res.sendFile(resolvedPath);
+    }
+
+    return res.redirect(imageUrl);
   }
 });
 
