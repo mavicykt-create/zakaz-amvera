@@ -14,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT);
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '12345');
 const IMAGE_WIDTH = Number(process.env.IMAGE_WIDTH || 220);
 const IMAGE_QUALITY = Number(process.env.IMAGE_QUALITY || 42);
