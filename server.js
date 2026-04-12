@@ -506,12 +506,16 @@ async function handleExchangeRequest(req, res) {
   }
 
   if (mode === 'import') {
-    const result = await tryImportFromExchangeDir();
-    if (result.ok) {
-      return res.type('text/plain; charset=utf-8').send('success');
-    }
-    return res.type('text/plain; charset=utf-8').send('success');
-  }
+  console.log('IMPORT START');
+
+  const result = await tryImportFromExchangeDir();
+
+  console.log('IMPORT RESULT:', result);
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+
+  return res.send('success\n');
+}
 
   return res.status(400).type('text/plain; charset=utf-8').send('failure\nНеизвестный mode');
 }
