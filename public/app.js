@@ -322,8 +322,12 @@ function renderCatalog() {
                     ? `<img class="product-card__image" src="${buildImageUrl(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy">`
                     : `<div class="product-card__image product-card__image--placeholder">Нет фото</div>`
                 }
-                <div class="product-card__qty ${qty > 0 ? 'is-visible' : ''}">${qty > 0 ? qty : ''}</div>
-              </div>
+                <div
+  class="product-card__qty ${qty > 0 ? 'is-visible' : ''}"
+  title="Уменьшить количество"
+>
+  ${qty > 0 ? `− ${qty}` : ''}
+</div>
 
               <div class="product-card__body">
                 <div class="product-card__name">${escapeHtml(product.name)}</div>
@@ -365,7 +369,7 @@ function updateAllBadges() {
     const qty = state.cart[id] || 0;
     const qtyEl = card.querySelector('.product-card__qty');
     if (!qtyEl) return;
-    qtyEl.textContent = qty > 0 ? String(qty) : '';
+    qtyEl.textContent = qty > 0 ? `− ${qty}` : '';
     qtyEl.classList.toggle('is-visible', qty > 0);
   });
 }
@@ -627,6 +631,16 @@ async function registerSW() {
 }
 
 els.catalogRoot.addEventListener('click', (event) => {
+  const minusBadge = event.target.closest('.product-card__qty');
+  if (minusBadge) {
+    const card = event.target.closest('.product-card');
+    if (!card) return;
+    const id = card.dataset.id;
+    if (!id) return;
+    changeCartQty(id, -1);
+    return;
+  }
+
   const card = event.target.closest('.product-card');
   if (!card) return;
   const id = card.dataset.id;
