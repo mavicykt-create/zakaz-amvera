@@ -45,7 +45,7 @@ let catalogState = {
 let refreshInProgress = false;
 
 app.use(cors());
-app.all(['/1c_exchange.php', '/commerceml/1c_exchange.php', '/bitrix/admin/1c_exchange.php'], requireExchangeAuth, express.raw({ type: 'application/octet-stream', limit: '200mb' }), async (req, res) => {
+app.all(['/1c_exchange.php', '/commerceml/1c_exchange.php', '/bitrix/admin/1c_exchange.php'], requireExchangeAuth, express.raw({ type: '*/*', limit: '200mb' }), async (req, res) => {
   try {
     await handleExchangeRequest(req, res);
   } catch (error) {
