@@ -226,22 +226,27 @@ select {
 
 .product-card__qty {
   position: absolute;
-  top: 7px;
-  right: 7px;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 8px;
+  top: 8px;
+  right: 8px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
   border-radius: 999px;
   background: var(--lime);
   color: #111;
   display: none;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
-  box-shadow: 0 6px 16px rgba(132, 204, 22, 0.35);
+  box-shadow: 0 8px 18px rgba(132, 204, 22, 0.35);
+  cursor: pointer;
+  z-index: 3;
 }
 
+.product-card__qty:active {
+  transform: scale(0.96);
+}
 .product-card__qty.is-visible {
   display: inline-flex;
 }
