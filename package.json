@@ -1,7 +1,9 @@
 {
   "name": "online-shop",
   "version": "1.0.0",
+  "description": "Simple online shop backend",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
