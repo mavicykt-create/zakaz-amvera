@@ -324,9 +324,9 @@ function renderCatalog() {
                 }
                 <div
   class="product-card__qty ${qty > 0 ? 'is-visible' : ''}"
-  title="Уменьшить количество"
+  title="Уменьшить"
 >
-  ${qty > 0 ? `− ${qty}` : ''}
+  ${qty > 0 ? qty : ''}
 </div>
 
               <div class="product-card__body">
@@ -369,7 +369,7 @@ function updateAllBadges() {
     const qty = state.cart[id] || 0;
     const qtyEl = card.querySelector('.product-card__qty');
     if (!qtyEl) return;
-    qtyEl.textContent = qty > 0 ? `− ${qty}` : '';
+    qtyEl.textContent = qty > 0 ? String(qty) : '';
     qtyEl.classList.toggle('is-visible', qty > 0);
   });
 }
