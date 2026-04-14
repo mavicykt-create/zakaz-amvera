@@ -1,4 +1,3 @@
-cat > server.js << 'EOF'
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -136,4 +135,3 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server started on :${PORT}`);
 });
-EOF
