@@ -850,6 +850,14 @@ app.get('/api/products', async (req, res) => {
   if (!catalogState.products.length && !catalogState.error) {
     await loadCatalogFromDisk();
   }
+
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0',
+    Surrogate-Control: 'no-store'
+  });
+
   res.json({ ok: true, ...catalogState });
 });
 
