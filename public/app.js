@@ -508,7 +508,10 @@ async function loadProducts() {
   els.refreshBtn.disabled = true;
 
   try {
-    const res = await fetch('/api/products', { cache: 'no-store' });
+    const res = await fetch(`/api/products?_=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache' }
+    });
     const data = await res.json();
 
     if (!res.ok || !data.ok) {
@@ -541,7 +544,7 @@ async function loadProducts() {
 
       ensureSelectedCategory();
       rerenderVisibleParts();
-      refreshStatusFromLoadedAt();
+      setStatus('Не удалось получить свежий каталог. Показаны сохраненные данные.', true);
     } else {
       setStatus(error.message || 'Ошибка загрузки каталога', true);
     }
