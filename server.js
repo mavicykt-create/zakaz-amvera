@@ -744,7 +744,7 @@ async function handleExchangeRequest(req, res) {
   const importFilename = String(req.query.filename || '').toLowerCase();
 
   console.log(
-    `[1C] mode=${mode || '-'} type=${type || '-'} filename=${String(req.query.filename || '')} length=${req.headers['content-length'] || '0'}`
+    `[${mode || '-'} type=${type || '-'} filename=${String(req.query.filename || '')} length=${req.headers['content-length'] || '0'}`
   );
 
   if (type && type !== 'catalog') {
@@ -824,10 +824,46 @@ async function handleExchangeRequest(req, res) {
     }
   }
 
-  return res
-    .status(400)
-    .type('text/plain; charset=utf-8')
-    .send('failure\nНеизвестный mode');
+  if (mode === 'import') {
+  try {
+    if (importFilename.includes('import')) {
+      console.log('[1C] import step for import.xml');
+      return res.type('text/plain; charset=utf-8').send('success');
+    }
+
+    if (importFilename.includes('offers')) {
+      const result = await tryImportFromExchangeDir();
+      console.log('[1C] import result:', result);
+
+      if (!result.ok) {
+        return res
+          .status(500)
+          .type('text/plain; charset=utf-8')
+          .send(`failure\nНе найден файл ${result.waitingFor}`);
+      }
+
+      return res.type('text/plain; charset=utf-8').send('success');
+    }
+
+    return res.type('text/plain; charset=utf-8').send('success');
+  } catch (error) {
+    console.error('[1C] import error:', error);
+    return res
+      .status(500)
+      .type('text/plain; charset=utf-8')
+      .send(`failure\n${error.message || 'Ошибка импорта'}`);
+  }
+}
+
+if (mode === 'complete') {
+  console.log('[1C] complete');
+  return res.type('text/plain; charset=utf-8').send('success');
+}
+
+return res
+  .status(400)
+  .type('text/plain; charset=utf-8')
+  .send(`failure\nНеизвестный mode: ${mode || '(empty)'}`);
 }
 
 app.get('/api/health', (req, res) => {
