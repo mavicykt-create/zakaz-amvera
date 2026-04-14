@@ -1,6 +1,6 @@
-const STATIC_CACHE = 'mobile-order-static-v6';
-const API_CACHE = 'mobile-order-api-v6';
-const IMAGE_CACHE = 'mobile-order-images-v6';
+const STATIC_CACHE = 'mobile-order-static-v7';
+const API_CACHE = 'mobile-order-api-v7';
+const IMAGE_CACHE = 'mobile-order-images-v7';
 const OFFLINE_PAGE = '/offline.html';
 
 const STATIC_ASSETS = [
@@ -41,6 +41,11 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
 
   if (req.method !== 'GET') return;
+
+  if (url.pathname === '/api/products') {
+    event.respondWith(networkOnlyProducts(req));
+    return;
+  }
 
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirstApi(req));
@@ -145,5 +150,23 @@ async function cacheFirstImage(request) {
     return response;
   } catch {
     return new Response('', { status: 404 });
+  }
+}
+
+async function networkOnlyProducts(request) {
+  try {
+    return await fetch(request, { cache: 'no-store' });
+  } catch {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        offline: true,
+        error: 'Не удалось получить свежий каталог'
+      }),
+      {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
   }
 }
