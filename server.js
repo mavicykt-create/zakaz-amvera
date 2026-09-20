@@ -8,6 +8,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { parseStringPromise } from 'xml2js';
+import { createOrderAppender } from './src/order-store.js';
+import { createOrdersExportRouter } from './src/inbox/orders-export.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,14 +17,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '12345');
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '');
 
 const IMAGE_WIDTH = Number(process.env.IMAGE_WIDTH || 220);
 const IMAGE_QUALITY = Number(process.env.IMAGE_QUALITY || 42);
 const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS || 6 * 60 * 60 * 1000);
 
 const EXCHANGE_LOGIN = String(process.env.EXCHANGE_LOGIN || 'admin');
-const EXCHANGE_PASSWORD = String(process.env.EXCHANGE_PASSWORD || ADMIN_PASSWORD);
+const EXCHANGE_PASSWORD = String(process.env.EXCHANGE_PASSWORD || '');
 const EXCHANGE_SESSION_NAME = 'sessid';
 const EXCHANGE_SESSION_ID = 'zakazamvera';
 
@@ -38,6 +40,7 @@ const DATA_DIR = process.env.DATA_DIR
   : '/data';
 
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
+const appendOrder = createOrderAppender(ORDERS_FILE);
 const CATALOG_FILE = path.join(DATA_DIR, 'catalog.json');
 const IMAGE_CACHE_DIR = path.join(DATA_DIR, 'cache');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
@@ -56,6 +59,9 @@ let catalogState = {
 };
 
 let refreshInProgress = false;
+
+// A dedicated read-only feed for the separate private inbox service.
+app.use('/api/integrations/orders', createOrdersExportRouter({ readOrders }));
 
 app.use(cors());
 
@@ -180,6 +186,7 @@ function sortRuByName(items) {
 }
 
 function requireAdmin(req, res, next) {
+  if (!ADMIN_PASSWORD) return res.status(503).json({ ok: false, error: 'Доступ администратора не настроен' });
   const password = String(req.query.password || req.headers['x-admin-password'] || '');
   if (password !== ADMIN_PASSWORD) {
     return res.status(401).json({ ok: false, error: 'Неверный пароль' });
@@ -190,10 +197,6 @@ function requireAdmin(req, res, next) {
 async function readOrders() {
   const text = await fs.readFile(ORDERS_FILE, 'utf8');
   return JSON.parse(text);
-}
-
-async function writeOrders(orders) {
-  await fs.writeFile(ORDERS_FILE, JSON.stringify(orders, null, 2), 'utf8');
 }
 
 async function loadCatalogFromDisk() {
@@ -661,6 +664,7 @@ function decodeBasicAuth(header = '') {
 }
 
 function requireExchangeAuth(req, res, next) {
+  if (!EXCHANGE_PASSWORD) return res.status(503).type('text/plain').send('failure\nExchange credentials not configured');
   const creds = decodeBasicAuth(String(req.headers.authorization || ''));
 
   if (!creds || creds.login !== EXCHANGE_LOGIN || creds.password !== EXCHANGE_PASSWORD) {
@@ -964,10 +968,8 @@ app.post('/api/orders', async (req, res) => {
     });
   }
 
-  const orders = await readOrders();
-
   const order = {
-    id: `ORD-${Date.now()}`,
+    id: `ORD-${Date.now()}-${crypto.randomUUID()}`,
     createdAt: new Date().toISOString(),
     customer: cleanText(customer),
     comment: cleanText(comment),
@@ -977,8 +979,12 @@ app.post('/api/orders', async (req, res) => {
     totalSum: normalizedItems.reduce((sum, i) => sum + i.sum, 0)
   };
 
-  orders.unshift(order);
-  await writeOrders(orders);
+  try {
+    await appendOrder(order);
+  } catch {
+    console.error('Order save failed; request not acknowledged.');
+    return res.status(503).json({ ok: false, error: 'Не удалось сохранить заказ. Повторите попытку.' });
+  }
 
   res.json({ ok: true, orderId: order.id, totalSum: order.totalSum });
 });
@@ -989,67 +995,29 @@ app.get('/api/orders', requireAdmin, async (req, res) => {
 });
 
 app.get('/img', async (req, res) => {
-  const imageUrl = String(req.query.url || '');
-  if (!imageUrl) {
-    return res.status(400).send('No url');
-  }
-
-  let resolvedPath = imageUrl;
-  if (imageUrl.startsWith('/uploads/')) {
-    resolvedPath = path.join(DATA_DIR, imageUrl.replace(/^\/uploads\//, 'uploads/'));
-  }
-
-  const key = simpleHash(`${imageUrl}:${IMAGE_WIDTH}:${IMAGE_QUALITY}`);
-  const cached = await readImageCache(key);
-
-  if (cached) {
-    res.setHeader('Content-Type', 'image/webp');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    return res.sendFile(cached);
-  }
-
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   try {
-    let buffer;
-
-    if (imageUrl.startsWith('/uploads/')) {
-      buffer = await fs.readFile(resolvedPath);
-    } else {
-      const response = await fetch(imageUrl, {
-        headers: { 'user-agent': 'Mozilla/5.0 Mobile Order Bot' }
-      });
-
-      if (!response.ok) {
-        throw new Error('Image fetch failed');
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      buffer = Buffer.from(arrayBuffer);
+    const { resolveImageSource, readImageSource } = await import('./src/image-security.js');
+    const imageUrl = req.query.url;
+    const source = await resolveImageSource(imageUrl, { sourceImagesDir: SOURCE_IMAGES_DIR, products: catalogState.products });
+    const key = simpleHash(`${imageUrl}:${IMAGE_WIDTH}:${IMAGE_QUALITY}`);
+    const cached = await readImageCache(key);
+    if (cached) {
+      res.setHeader('Content-Type', 'image/webp');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.sendFile(cached);
     }
-
+    const buffer = await readImageSource(source);
     const optimized = await sharp(buffer)
-      .resize({
-        width: IMAGE_WIDTH,
-        height: IMAGE_WIDTH,
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .webp({ quality: IMAGE_QUALITY })
-      .toBuffer();
-
-    const file = path.join(IMAGE_CACHE_DIR, `${key}.webp`);
-    await fs.writeFile(file, optimized);
-
+      .resize({ width: IMAGE_WIDTH, height: IMAGE_WIDTH, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: IMAGE_QUALITY }).toBuffer();
+    await fs.writeFile(path.join(IMAGE_CACHE_DIR, `${key}.webp`), optimized);
     res.setHeader('Content-Type', 'image/webp');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.send(optimized);
   } catch (error) {
-    console.error('Image proxy error:', error);
-
-    if (imageUrl.startsWith('/uploads/')) {
-      return res.sendFile(resolvedPath);
-    }
-
-    return res.redirect(imageUrl);
+    // Source paths, remote URLs and raw nonimage contents must never reach clients/logs.
+    return res.status(error.status === 400 ? 400 : error.code === 'ENOENT' ? 404 : 502).type('text/plain').send('Image unavailable');
   }
 });
 

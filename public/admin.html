@@ -22,6 +22,10 @@
     const ordersEl = document.getElementById('orders');
     const passwordEl = document.getElementById('password');
 
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    }
+
     function fmtMoney(v) {
       return new Intl.NumberFormat('ru-RU').format(v || 0) + ' ₽';
     }
@@ -35,7 +39,7 @@
       statusEl.textContent = 'Загрузка…';
       ordersEl.innerHTML = '';
 
-      const res = await fetch('/api/orders?password=' + encodeURIComponent(password));
+      const res = await fetch('/api/orders', { headers: { 'x-admin-password': password }, cache: 'no-store' });
       const data = await res.json();
 
       if (!data.ok) {
@@ -49,26 +53,26 @@
         <section class="order-card">
           <div class="order-head">
             <div>
-              <strong>${order.id}</strong>
-              <div class="subtle">${fmtDate(order.createdAt)}</div>
+              <strong>${escapeHtml(order.id)}</strong>
+              <div class="subtle">${escapeHtml(fmtDate(order.createdAt))}</div>
             </div>
             <div class="order-totals">
-              <strong>${order.totalQuantity} шт</strong>
-              <div>${fmtMoney(order.totalSum)}</div>
+              <strong>${escapeHtml(order.totalQuantity)} шт</strong>
+              <div>${escapeHtml(fmtMoney(order.totalSum))}</div>
             </div>
           </div>
-          <div class="subtle">Клиент: ${order.customer || '—'}</div>
-          <div class="subtle">Комментарий: ${order.comment || '—'}</div>
+          <div class="subtle">Клиент: ${escapeHtml(order.customer || '—')}</div>
+          <div class="subtle">Комментарий: ${escapeHtml(order.comment || '—')}</div>
           <table class="order-table">
             <thead><tr><th>Артикул</th><th>Товар</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead>
             <tbody>
               ${order.items.map(item => `
                 <tr>
-                  <td>${item.article || '—'}</td>
-                  <td>${item.name}</td>
-                  <td>${item.quantity}</td>
-                  <td>${fmtMoney(item.price)}</td>
-                  <td>${fmtMoney(item.sum)}</td>
+                  <td>${escapeHtml(item.vendorCode || item.article || '—')}</td>
+                  <td>${escapeHtml(item.name)}</td>
+                  <td>${escapeHtml(item.quantity)}</td>
+                  <td>${escapeHtml(fmtMoney(item.cartPrice ?? item.price))}</td>
+                  <td>${escapeHtml(fmtMoney(item.sum))}</td>
                 </tr>
               `).join('')}
             </tbody>

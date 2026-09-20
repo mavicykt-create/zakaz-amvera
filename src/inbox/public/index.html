@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101d35">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Пульт · Сладкая планета</title>
+  <link rel="icon" href="/inbox/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/inbox/assets/style.css">
+  <script src="/inbox/assets/app.js" defer></script>
+</head>
+<body>
+  <div id="boot" class="boot"><span class="brand-symbol">П</span><p>Открываем рабочую доску…</p></div>
+
+  <main id="login-screen" class="login-screen" hidden>
+    <section class="login-story">
+      <a class="brand" href="/inbox/"><span class="brand-symbol">П</span><span>Пульт<small>СЛАДКАЯ ПЛАНЕТА</small></span></a>
+      <div class="login-story-copy"><span class="eyebrow">ВАШ РАБОЧИЙ ДЕНЬ</span><h1>Всё входящее.<br>Каждое дело.<br>В одном месте.</h1><p>Письма, сообщения, заказы и оплаты — с понятным следующим шагом.</p><div class="login-principle"><span>✓</span> Прочитано — ещё не выполнено.</div></div>
+      <div class="login-foot">Закрытое рабочее пространство</div>
+    </section>
+    <section class="login-form-area">
+      <form id="login-form" class="login-form">
+        <span class="eyebrow">ДОСТУП К ДОСКЕ</span><h2>С возвращением</h2><p class="muted">Введите пароль и код из приложения-аутентификатора.</p>
+        <label for="password">Пароль</label><input id="password" type="password" autocomplete="current-password" required maxlength="512">
+        <label for="code">Код подтверждения</label><input id="code" class="code-input" type="text" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="000000" required>
+        <p id="login-error" class="form-error" role="alert" hidden></p><button id="login-submit" class="button button-primary button-wide" type="submit">Войти в Пульт <span aria-hidden="true">→</span></button>
+        <p class="secure-note">Защищённый вход · Двухфакторная проверка</p>
+      </form>
+      <div id="setup-pending" class="login-form" hidden><span class="eyebrow">ПОДГОТОВКА ПРОСТРАНСТВА</span><h2>Пульт ещё не настроен</h2><p class="muted">Администратору нужно настроить защищённый вход на сервере. После этого здесь появится форма входа.</p><button class="button button-primary" id="setup-retry" type="button">Проверить ещё раз</button></div>
+      <div id="boot-error" class="login-form" hidden><span class="eyebrow">НЕТ СОЕДИНЕНИЯ</span><h2>Не удалось открыть Пульт</h2><p class="muted">Проверьте подключение к интернету и попробуйте ещё раз.</p><button class="button button-primary" id="boot-retry" type="button">Повторить</button></div>
+    </section>
+  </main>
+
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/inbox/"><span class="brand-symbol">П</span><span>Пульт<small>СЛАДКАЯ ПЛАНЕТА</small></span></a>
+      <div class="nav-section-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+      <button class="nav-item active" id="all-incoming" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Все входящие</span><span class="nav-count" id="nav-count">0</span></button>
+      <button class="nav-item" id="open-connections" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0V8zm6 9v4"/></svg><span>Подключения</span><span class="connection-dot" id="connection-dot"></span></button>
+      <div class="sidebar-sources"><div class="nav-section-label">ИСТОЧНИКИ</div><div id="source-navigation"></div></div>
+      <div class="sidebar-bottom"><div class="sidebar-tip"><span>Держите важное на виду</span><p>Назначьте срок, чтобы дело появилось в «Сегодня».</p></div><button class="nav-item" id="logout" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v16h5m6-12 4 4-4 4m-7-4h11"/></svg><span>Выйти</span></button></div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar"><div class="breadcrumb">Рабочее пространство <span>/</span> <strong>Входящие</strong></div><div class="topbar-actions"><span class="sync-status" id="sync-status"><span class="status-dot"></span><span id="sync-label">Подключаемся…</span></span><button class="button button-quiet" id="reminders" type="button" title="Напоминания работают, пока страница открыта"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-9 12a3 3 0 0 0 6 0"/></svg><span>Напоминания</span></button><div class="avatar" title="Закрытое пространство">СП</div></div></header>
+      <section class="page-heading"><div><div class="eyebrow" id="today-label">РАБОЧАЯ ДОСКА</div><h1>Все входящие<span id="heading-count" class="heading-count">0</span></h1><p>Ничего не потерять. Довести важное до конца.</p></div><button id="new-task" class="button button-primary" type="button"><span class="plus" aria-hidden="true">+</span> Новое дело</button></section>
+      <section class="metrics" aria-label="Быстрые фильтры"><button class="metric selected" data-focus="all" type="button"><span class="metric-label">Открытые дела</span><strong id="metric-open">0</strong><span class="metric-foot">Всё, что требует внимания</span></button><button class="metric" data-focus="today" type="button"><span class="metric-label"><span class="mini-dot blue"></span> На сегодня</span><strong id="metric-today">0</strong><span class="metric-foot">Срок наступает сегодня</span></button><button class="metric" data-focus="overdue" type="button"><span class="metric-label"><span class="mini-dot red"></span> Просрочено</span><strong id="metric-overdue">0</strong><span class="metric-foot">Пора вернуться к делу</span></button><button class="metric" data-focus="waiting" type="button"><span class="metric-label"><span class="mini-dot amber"></span> Жду ответа</span><strong id="metric-waiting">0</strong><span class="metric-foot">Проверить, есть ли новости</span></button></section>
+      <div id="board-error" class="banner banner-error" role="alert" hidden><span>Не удалось обновить доску. Показанные данные могут быть неактуальны.</span><button id="refresh-board" class="text-button" type="button">Повторить</button></div>
+      <div id="reminder-hint" class="banner" hidden><span>Напоминания работают, пока эта страница открыта. Просроченные дела всегда остаются на доске.</span><button id="close-reminder-hint" class="icon-button" type="button" aria-label="Закрыть подсказку">×</button></div>
+      <section class="board-toolbar" aria-label="Поиск и фильтры"><label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="search" type="search" placeholder="Найти дело, отправителя или сообщение" aria-label="Поиск по делам"></label><select id="source-filter" aria-label="Фильтр по источнику"><option value="">Все источники</option></select><button id="unread-filter" class="unread-filter" type="button" aria-pressed="false">Непрочитанные <span id="unread-count">0</span></button><button id="reset-filters" class="text-button" type="button" hidden>Сбросить</button><span id="board-updated" class="toolbar-meta">Ожидаем данные</span></section>
+      <div id="empty-intro" class="empty-intro" hidden><span class="empty-intro-icon" aria-hidden="true">↗</span><div><h2>Здесь начнётся порядок</h2><p>Создайте первое дело или настройте источники. Новые письма, сообщения и заказы появятся в колонке «Новые».</p></div><button class="button button-secondary" id="empty-connections" type="button">Подключить источники</button></div>
+      <section id="board" class="board" aria-label="Доска дел"></section>
+      <footer class="board-footer"><span id="time-zone-label"></span><span>Прочитано ≠ выполнено</span></footer>
+    </main>
+  </div>
+
+  <dialog id="task-dialog" class="modal"><form id="task-form"><div class="dialog-header"><div><span class="eyebrow">ЗАФИКСИРОВАТЬ ВАЖНОЕ</span><h2>Новое дело</h2></div><button class="icon-button" type="button" data-close="task-dialog" aria-label="Закрыть">×</button></div><div class="dialog-body form-stack"><label for="task-title">Что нужно сделать?</label><input id="task-title" name="title" placeholder="Например, уточнить дату отгрузки" required maxlength="200"><label for="task-text">Подробности <span class="optional">необязательно</span></label><textarea id="task-text" name="text" rows="4" maxlength="10000" placeholder="Контекст, договорённости, следующий шаг"></textarea><label for="task-due">Срок <span class="optional due-time-zone"></span></label><input id="task-due" name="dueAt" type="datetime-local"><p id="task-error" class="form-error" role="alert" hidden></p></div><div class="dialog-footer"><button class="button button-secondary" type="button" data-close="task-dialog">Отмена</button><button class="button button-primary" id="task-submit" type="submit">Создать дело</button></div></form></dialog>
+
+  <dialog id="detail-dialog" class="drawer"><div class="drawer-top"><span class="eyebrow">КАРТОЧКА ДЕЛА</span><button class="icon-button" type="button" data-close="detail-dialog" aria-label="Закрыть карточку">×</button></div><div id="detail-loading" class="detail-loading">Загружаем карточку…</div><div id="detail-content" hidden><div class="detail-heading"><div id="detail-source"></div><h2 id="detail-title"></h2><p id="detail-sender" class="muted"></p></div><form id="detail-form" class="detail-controls"><div><label for="detail-status">Статус</label><select id="detail-status"><option value="new">Новые</option><option value="working">В работе</option><option value="waiting">Жду ответа</option><option value="done">Выполнено</option></select></div><div><label for="detail-due">Срок <span class="optional due-time-zone"></span></label><input id="detail-due" type="datetime-local"></div><button id="detail-save" class="button button-primary" type="submit">Сохранить</button><p id="detail-save-error" class="form-error full-width" role="alert" hidden></p></form><section class="detail-section"><h3>История и сообщения</h3><div id="detail-events" class="timeline"></div></section><section class="detail-section notes-section"><h3>Заметки</h3><div id="detail-notes"></div><form id="note-form"><label class="sr-only" for="note-text">Новая заметка</label><textarea id="note-text" rows="3" required maxlength="10000" placeholder="Что договорились? Какой следующий шаг?"></textarea><p id="note-error" class="form-error" role="alert" hidden></p><button class="button button-secondary" id="note-submit" type="submit">Добавить заметку</button></form></section></div></dialog>
+
+  <dialog id="connections-dialog" class="modal connections-modal"><div class="dialog-header"><div><span class="eyebrow">ПОСТУПЛЕНИЕ ИНФОРМАЦИИ</span><h2>Подключения</h2></div><button class="icon-button" type="button" data-close="connections-dialog" aria-label="Закрыть">×</button></div><div class="dialog-body"><p class="muted connection-explanation">Здесь показано состояние источников и время последнего успешного получения данных. Банковские уведомления поступают после получения письма.</p><div id="connection-list"></div><div class="connection-note">Подключения настраиваются администратором на сервере. Пароли и ключи не отображаются на доске.</div></div><div class="dialog-footer"><button class="button button-secondary" id="connections-refresh" type="button">Обновить состояние</button><button class="button button-primary" type="button" data-close="connections-dialog">Готово</button></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

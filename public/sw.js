@@ -1,6 +1,6 @@
-const STATIC_CACHE = 'mobile-order-static-v6';
-const API_CACHE = 'mobile-order-api-v6';
-const IMAGE_CACHE = 'mobile-order-images-v6';
+const STATIC_CACHE = 'mobile-order-static-v7';
+const API_CACHE = 'mobile-order-api-v7';
+const IMAGE_CACHE = 'mobile-order-images-v7';
 const OFFLINE_PAGE = '/offline.html';
 
 const STATIC_ASSETS = [
@@ -42,8 +42,13 @@ self.addEventListener('fetch', (event) => {
 
   if (req.method !== 'GET') return;
 
-  if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirstApi(req));
+  // Private pages, sessions, event streams and attachments never enter CacheStorage.
+  const pathname = url.pathname.toLowerCase();
+  if (pathname === '/inbox' || pathname.startsWith('/inbox/')) return;
+  if (url.origin !== self.location.origin) return;
+
+  if (pathname.startsWith('/api/')) {
+    if (['/api/products', '/api/health'].includes(pathname)) event.respondWith(networkFirstApi(req));
     return;
   }
 
@@ -57,7 +62,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(staleWhileRevalidateStatic(req));
+  if (STATIC_ASSETS.includes(url.pathname)) event.respondWith(staleWhileRevalidateStatic(req));
 });
 
 async function staleWhileRevalidateStatic(request) {
@@ -90,7 +95,7 @@ async function networkFirstPage(request) {
   try {
     const response = await fetch(request, { cache: 'no-store' });
 
-    if (response && response.ok) {
+    if (response && response.ok && ['/', '/index.html'].includes(new URL(request.url).pathname)) {
       cache.put('/index.html', response.clone());
     }
 
